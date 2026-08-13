@@ -86,22 +86,25 @@ func buildSessionTable(rs []render.SessionRow, th theme) table {
 func sessionStyle(header string, r render.SessionRow, v string, th theme) lipgloss.Style {
 	switch header {
 	case "CPU":
-		if r.CPU == "0%" || r.CPU == gitinfo.Dash {
+		if r.CPU == gitinfo.Dash {
 			return th.dim
 		}
 		return lipgloss.NewStyle()
 	case "BRANCH":
-		if render.Quiet(v) {
+		if render.Absent(v) {
 			return th.dim
 		}
 		return headTone(r.HeadState, th)
 	case "CHANGED":
-		if render.Quiet(v) {
+		if render.Absent(v) {
 			return th.dim
+		}
+		if v == "0" {
+			return lipgloss.NewStyle()
 		}
 		return th.local
 	default:
-		if render.Quiet(v) {
+		if render.Absent(v) {
 			return th.dim
 		}
 		return lipgloss.NewStyle()

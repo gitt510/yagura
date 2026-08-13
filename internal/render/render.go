@@ -86,8 +86,9 @@ var SessionColumns = []struct {
 	{"MEM", true, func(r SessionRow) string { return r.Mem }},
 }
 
-// Quiet は沈める値。動きの無い 0 と取れなかった値。
-func Quiet(v string) bool { return v == "0" || v == "-" || v == "…" || v == "" }
+// Absent は沈める値。取れなかった / 該当が無い / 収集前。
+// 0 は「観測できた事実」なので沈めず素の色で出す。
+func Absent(v string) bool { return v == "-" || v == "…" || v == "" }
 
 type palette struct {
 	dim, yellow, cyan, green, red, off string
@@ -103,7 +104,8 @@ type column struct {
 var driftColumns = []column{
 	// 手元にしか無い = 失うと戻せない
 	{"CHANGED", func(r Row) string { return r.Changed }, func(_ string, p palette) string { return p.yellow }},
-	{"AHEAD", func(r Row) string { return r.Ahead }, func(_ string, p palette) string { return p.yellow }},
+	// 未 push の commit は他の machine から見て既に起きている不整合
+	{"AHEAD", func(r Row) string { return r.Ahead }, func(_ string, p palette) string { return p.red }},
 	// remote との差 = 情報
 	{"BEHIND", func(r Row) string { return r.Behind }, func(_ string, p palette) string { return p.cyan }},
 	{"UNMERGED", func(r Row) string { return r.Unmerged }, func(_ string, p palette) string { return p.cyan }},
@@ -143,9 +145,11 @@ func Table(w io.Writer, rows []Row, useColor bool) {
 		cells := make([]string, len(driftColumns))
 		for j, c := range driftColumns {
 			v := c.value(r)
-			// 0 と - は沈めて、動きのある数字だけ立てる (… は収集待ちの placeholder)
-			tone := p.dim
-			if !Quiet(v) {
+			// 不在だけ沈める。0 は素の色、動きのある数字は列の色で立てる
+			tone := ""
+			if Absent(v) {
+				tone = p.dim
+			} else if v != "0" {
 				tone = c.tone(v, p)
 			}
 			cells[j] = paint(padLeft(v, widths[j]), tone, p.off)
@@ -195,17 +199,20 @@ func SessionTable(w io.Writer, rows []SessionRow, useColor bool) {
 func sessionTone(header string, r SessionRow, v string, p palette) string {
 	switch header {
 	case "CPU":
-		if r.CPU == "0%" || r.CPU == "-" {
+		if r.CPU == "-" {
 			return p.dim
 		}
 		return ""
 	case "CHANGED":
-		if Quiet(v) {
+		if Absent(v) {
 			return p.dim
+		}
+		if v == "0" {
+			return ""
 		}
 		return p.yellow
 	default:
-		if Quiet(v) {
+		if Absent(v) {
 			return p.dim
 		}
 		return ""

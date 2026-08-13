@@ -23,6 +23,7 @@ type theme struct {
 
 	dim     lipgloss.Style
 	local   lipgloss.Style
+	danger  lipgloss.Style // 既に起きている不整合 (未 push の commit など)
 	remote  lipgloss.Style
 	headOn  lipgloss.Style // default 以外の branch
 	headOff lipgloss.Style // detached
@@ -51,6 +52,7 @@ func newTheme(color bool) theme {
 		color:      color,
 		dim:        plain,
 		local:      plain,
+		danger:     plain,
 		remote:     plain,
 		headOn:     plain,
 		headOff:    plain,
@@ -72,14 +74,17 @@ func newTheme(color bool) theme {
 	}
 
 	th.dim = plain.Foreground(lipgloss.Color(colDim))
-	th.local = plain.Foreground(lipgloss.Color(colLocal))
-	th.remote = plain.Foreground(lipgloss.Color(colRemote))
-	// 既存の色は全部意味を持っているので、branch には色相を足さず bold だけで立てる
-	th.headOn = plain.Bold(true)
+	// 逸脱値の色 token は bold も併せ持つ。色が担う「平常からの逸脱」の
+	// 信号を太さで二重化する (0 は素のまま沈黙)
+	th.local = plain.Foreground(lipgloss.Color(colLocal)).Bold(true)
+	th.danger = plain.Foreground(lipgloss.Color(colNG)).Bold(true)
+	th.remote = plain.Foreground(lipgloss.Color(colRemote)).Bold(true)
+	// branch 名は brand の primary (logo と同じ青系) で立てる。
+	// 機能色 (yellow/cyan/green/red) は意味に取られている
+	th.headOn = plain.Foreground(lipgloss.Color("12")).Bold(true)
 	th.headOff = plain.Foreground(lipgloss.Color(colNG)).Bold(true)
 
 	th.border = th.dim
-	th.groupCount = th.dim
 	th.box = th.box.BorderForeground(lipgloss.Color(colDim))
 	// 青 → 明青 → cyan → 明 cyan。全部 ANSI-16 の slot
 	th.logoRamp = []lipgloss.Style{
@@ -90,9 +95,10 @@ func newTheme(color bool) theme {
 	}
 
 	th.bar = plain.Foreground(lipgloss.Color(colBarFG))
-	th.barOn = th.bar.Bold(true).Foreground(lipgloss.Color(colLocal))
+	// refresh 中の spinner は「要対応」ではなく活動中 = active state なので primary
+	th.barOn = th.bar.Bold(true).Foreground(lipgloss.Color("12"))
 	th.hint = th.bar.Foreground(lipgloss.Color(colDim))
-	th.warn = plain.Foreground(lipgloss.Color(colLocal))
+	th.warn = plain.Foreground(lipgloss.Color(colLocal)).Bold(true)
 	th.warnNote = th.bar.Foreground(lipgloss.Color(colLocal))
 	th.note = th.hint
 	return th

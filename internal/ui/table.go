@@ -42,8 +42,11 @@ func toneOf(fixed func(theme) lipgloss.Style) func(string, theme) lipgloss.Style
 		if v == rows.Unsynced {
 			return th.warn
 		}
-		if render.Quiet(v) {
+		if render.Absent(v) {
 			return th.dim
+		}
+		if v == "0" {
+			return lipgloss.NewStyle()
 		}
 		return fixed(th)
 	}
@@ -53,16 +56,17 @@ var driftCols = []colDef{
 	{"REPO", false, func(r render.Row) string { return r.Repo }, nil},
 	{"HEAD", false, func(r render.Row) string { return r.Head }, nil},
 	{"CHANGED", true, func(r render.Row) string { return r.Changed }, toneOf(func(t theme) lipgloss.Style { return t.local })},
-	{"AHEAD", true, func(r render.Row) string { return r.Ahead }, toneOf(func(t theme) lipgloss.Style { return t.local })},
+	// 未 push の commit は他の machine から見て既に起きている不整合
+	{"AHEAD", true, func(r render.Row) string { return r.Ahead }, toneOf(func(t theme) lipgloss.Style { return t.danger })},
 	{"BEHIND", true, func(r render.Row) string { return r.Behind }, toneOf(func(t theme) lipgloss.Style { return t.remote })},
 	{"UNMERGED", true, func(r render.Row) string { return r.Unmerged }, toneOf(func(t theme) lipgloss.Style { return t.remote })},
 }
 
-// default branch の上に居るのは退屈な平常時なので、0 と同じく沈める。
+// default branch は平常時なので素の色のまま、外れている branch だけ立てる。
 func headTone(s render.HeadState, th theme) lipgloss.Style {
 	switch s {
 	case render.HeadDefault:
-		return th.dim
+		return lipgloss.NewStyle()
 	case render.HeadBranch:
 		return th.headOn
 	case render.HeadDetached:
