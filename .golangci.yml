@@ -1,0 +1,24 @@
+# user 向けの文言は英語で統一する。日本語を書いてよいのは comment と test だけ。
+# gosmopolitan が string literal の和文字 (漢字・ひらがな・カタカナ) を落とす。
+version: "2"
+
+run:
+  tests: false
+
+linters:
+  enable:
+    - gosmopolitan
+  settings:
+    # 表の書き出し (fmt.Fprint 系) と read-only file の Close は
+    # error を見ても打つ手がないので checked 扱いにしない
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (*os.File).Close
+    gosmopolitan:
+      watch-for-scripts:
+        - Han
+        - Hiragana
+        - Katakana

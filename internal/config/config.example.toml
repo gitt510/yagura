@@ -1,0 +1,17 @@
+# yagura config (~/.config/yagura/config.toml)
+
+[repos]
+# a root that is itself a git repo is watched as one;
+# otherwise its direct children are.
+roots = [
+  "~/ghq/github.com/<owner>",
+  "~/dotfiles",
+]
+# refresh interval of the repos view (fetches each repo).
+interval = "1m"
+
+[sessions]
+# process names to watch, matched against the command basename.
+commands = ["claude"]
+# refresh interval of the sessions view.
+interval = "10s"
