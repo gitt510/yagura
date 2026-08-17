@@ -36,6 +36,54 @@ func TestOneFetchFailed(t *testing.T) {
 	}
 }
 
+// BranchView contract: the default branch always leads the repo block (same
+// slot everywhere) and the rest follow by name; the first row carries the
+// REPO name and is the only focusable one (Sub false), while the checked-out
+// branch is the only row with CHANGED. A repo whose branches have not been
+// collected yet carries a trailing pending row.
+func TestBranchView(t *testing.T) {
+	repos := []discover.Repo{{Group: "~/g", Base: "r"}}
+	infos := []gitinfo.Info{{
+		Changed: "2", Head: "bootstrap", Branch: "bootstrap", Base: "main",
+		Ahead: "0", Behind: "0", Unmerged: "6",
+	}}
+	branches := map[int][]gitinfo.BranchInfo{0: {
+		{Name: "feature", Ahead: "1", Behind: "0", Unmerged: "2"},
+		{Name: "main", Ahead: "0", Behind: "5", Unmerged: "0"},
+	}}
+
+	got := BranchView(repos, infos, branches)
+	if len(got) != 3 {
+		t.Fatalf("len = %d, want 3", len(got))
+	}
+	if got[0].Head != "main" || got[1].Head != "bootstrap" || got[2].Head != "feature" {
+		t.Errorf("order = %q, %q, %q, want default first, then by name", got[0].Head, got[1].Head, got[2].Head)
+	}
+	if got[0].Repo != "r" || got[1].Repo != "" || got[2].Repo != "" {
+		t.Errorf("REPO on the first row only, got %q, %q, %q", got[0].Repo, got[1].Repo, got[2].Repo)
+	}
+	if got[0].Sub || !got[1].Sub || !got[2].Sub {
+		t.Errorf("Sub = %v, %v, %v, want only the named first row focusable", got[0].Sub, got[1].Sub, got[2].Sub)
+	}
+	if got[0].Changed != gitinfo.Dash || got[1].Changed != "2" {
+		t.Errorf("CHANGED belongs to the checked-out branch only: %q, %q", got[0].Changed, got[1].Changed)
+	}
+	if got[0].HeadState != render.HeadDefault || got[1].HeadState != render.HeadBranch {
+		t.Errorf("HeadState = %v, %v, want HeadDefault / HeadBranch", got[0].HeadState, got[1].HeadState)
+	}
+	if got[0].Behind != "5" || got[2].Unmerged != "2" {
+		t.Errorf("drift values lost: %+v, %+v", got[0], got[2])
+	}
+
+	pending := BranchView(repos, infos, nil)
+	if len(pending) != 2 || pending[0].Head != "bootstrap" || pending[1].Head != Pending {
+		t.Errorf("pending = %+v, want the checked-out row plus a … row", pending)
+	}
+	if pending[0].Sub || !pending[1].Sub {
+		t.Errorf("pending Sub = %v, %v, want only the named first row focusable", pending[0].Sub, pending[1].Sub)
+	}
+}
+
 // Sessions contract: home shrinks to ~, values that could not be read become
 // -, and rows are ordered by cwd.
 func TestSessions(t *testing.T) {

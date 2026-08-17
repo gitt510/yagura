@@ -19,6 +19,7 @@ roots, and the agent CLI sessions running on the machine right now.
 - Every refresh fetches each repo with `--prune`
 - When a fetch fails, `AHEAD` / `BEHIND` / `UNMERGED` show `x` instead of stale numbers
 - Without any declared root, startup exits with setup instructions
+- `tab` toggles branch mode: one row per local branch instead of one per repo — the default branch always first, the rest by name; the checked-out branch alone carries `CHANGED`, and the cursor sits on the row with the repo name; `AHEAD` / `BEHIND` count against each branch's own upstream, `UNMERGED` against `origin/HEAD`
 
 ## Sessions view
 

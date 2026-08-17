@@ -98,11 +98,8 @@ func sessionStyle(header string, r render.SessionRow, v string, th theme) lipglo
 		}
 		return headTone(r.HeadState, th)
 	case "CHANGED":
-		if render.Absent(v) {
+		if render.Absent(v) || v == "0" {
 			return th.dim
-		}
-		if v == "0" {
-			return lipgloss.NewStyle()
 		}
 		return th.local
 	default:

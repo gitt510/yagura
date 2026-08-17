@@ -82,6 +82,71 @@ func unsync(v string, failed bool) string {
 	return Unsynced
 }
 
+// BranchView flattens each repo into one row per local branch, for the TUI's
+// branch mode. The default branch always leads, so it holds the same slot in
+// every repo block; the rest follow by name. The block's first row carries
+// the REPO name and is the only focusable one (Sub false), keeping repo and
+// focusable row 1:1. The checked-out branch is the only row with a working
+// tree (CHANGED); its number against the others' dash tells them apart, so
+// no marker is needed. A repo whose branches have not been collected yet
+// carries a trailing pending row, so its absence is never mistaken for "no
+// other branches". branches is keyed by repo index; a present key means
+// collected, even when empty.
+func BranchView(repos []discover.Repo, infos []gitinfo.Info, branches map[int][]gitinfo.BranchInfo) []render.Row {
+	type entry struct {
+		name    string
+		def     bool
+		current bool
+		row     render.Row
+	}
+
+	var out []render.Row
+	for i, r := range repos {
+		in := infos[i]
+		list, loaded := branches[i]
+
+		h := One(r, in)
+		es := make([]entry, 0, len(list)+2)
+		es = append(es, entry{name: h.Head, def: h.HeadState == render.HeadDefault, current: true, row: h})
+		for _, b := range list {
+			state := render.HeadBranch
+			if b.Name == in.Base {
+				state = render.HeadDefault
+			}
+			es = append(es, entry{name: gitinfo.ShortHead(b.Name), def: state == render.HeadDefault, row: render.Row{
+				Group:     r.Group,
+				HeadState: state,
+				Changed:   gitinfo.Dash,
+				Ahead:     unsync(b.Ahead, in.FetchFailed),
+				Behind:    unsync(b.Behind, in.FetchFailed),
+				Unmerged:  unsync(b.Unmerged, in.FetchFailed),
+			}})
+		}
+		sort.SliceStable(es, func(a, b int) bool {
+			if es[a].def != es[b].def {
+				return es[a].def
+			}
+			return es[a].name < es[b].name
+		})
+		if !loaded {
+			es = append(es, entry{name: Pending, row: render.Row{
+				Group: r.Group, Changed: Pending, Ahead: Pending, Behind: Pending, Unmerged: Pending,
+			}})
+		}
+
+		for j, e := range es {
+			row := e.row
+			row.Head = e.name
+			row.Repo, row.Sub = "", true
+			if j == 0 {
+				row.Repo, row.Sub = r.Base, false
+			}
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
 // CWDs returns the sessions' cwds, dropping empty ones. This is the list of
 // paths to look up in git.
 func CWDs(ps []procs.Proc) []string {

@@ -28,6 +28,10 @@ type Row struct {
 	Head  string
 	// HeadState gives meaning to what Head holds, so nobody has to infer it from the string
 	HeadState HeadState
+	// Sub marks an information row of the repo above (branch mode): group
+	// counts skip it and the TUI cursor never stops on it, keeping repo and
+	// focusable row 1:1
+	Sub bool
 
 	Changed  string
 	Ahead    string
@@ -87,7 +91,8 @@ var SessionColumns = []struct {
 }
 
 // Absent reports the values to mute: unreadable, not applicable, or not
-// collected yet. 0 is an observed fact, so it stays unmuted in the plain color.
+// collected yet. 0 is not absent — it is an observed fact that keeps its
+// character — but it shares the dim tone, so only movement carries color.
 func Absent(v string) bool { return v == "-" || v == "…" || v == "" }
 
 type palette struct {
@@ -106,8 +111,8 @@ var driftColumns = []column{
 	{"CHANGED", func(r Row) string { return r.Changed }, func(_ string, p palette) string { return p.yellow }},
 	// Unpushed commits are, from another machine, an inconsistency that already exists
 	{"AHEAD", func(r Row) string { return r.Ahead }, func(_ string, p palette) string { return p.red }},
-	// A gap against the remote = information
-	{"BEHIND", func(r Row) string { return r.Behind }, func(_ string, p palette) string { return p.cyan }},
+	// Falling behind the remote reads as "needs action" too, so it shares red
+	{"BEHIND", func(r Row) string { return r.Behind }, func(_ string, p palette) string { return p.red }},
 	{"UNMERGED", func(r Row) string { return r.Unmerged }, func(_ string, p palette) string { return p.cyan }},
 }
 
@@ -145,11 +150,11 @@ func Table(w io.Writer, rows []Row, useColor bool) {
 		cells := make([]string, len(driftColumns))
 		for j, c := range driftColumns {
 			v := c.value(r)
-			// Mute only what is absent. 0 stays plain; numbers with movement take the column color
+			// Absent and 0 sink into dim; numbers with movement take the column color
 			tone := ""
-			if Absent(v) {
+			if Absent(v) || v == "0" {
 				tone = p.dim
-			} else if v != "0" {
+			} else {
 				tone = c.tone(v, p)
 			}
 			cells[j] = paint(padLeft(v, widths[j]), tone, p.off)
@@ -205,11 +210,8 @@ func sessionTone(header string, r SessionRow, v string, p palette) string {
 		}
 		return ""
 	case "CHANGED":
-		if Absent(v) {
+		if Absent(v) || v == "0" {
 			return p.dim
-		}
-		if v == "0" {
-			return ""
 		}
 		return p.yellow
 	default:

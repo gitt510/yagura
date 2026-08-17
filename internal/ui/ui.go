@@ -63,6 +63,13 @@ type repoResultMsg struct {
 	fetchErr bool
 }
 
+// branchesResultMsg carries one repo's other local branches. It has no
+// generation: the newest list simply replaces the previous one.
+type branchesResultMsg struct {
+	index int
+	list  []gitinfo.BranchInfo
+}
+
 // tickMsg signals an auto-refresh. gen is the armTimer generation, so a
 // leftover timer that fires after a view switch changed the interval can be
 // discarded.
@@ -86,6 +93,12 @@ type model struct {
 
 	infos    []gitinfo.Info
 	procList []render.SessionRow
+
+	// branchMode is the repos view's second display mode: one row per local
+	// branch instead of one per repo. branches doubles as the loaded marker:
+	// a key that is present but empty means "collected, none"
+	branchMode bool
+	branches   map[int][]gitinfo.BranchInfo
 	// loaded records whether each view has collected at least once, so switching
 	// to a view never leaves it empty
 	loaded [viewCount]bool
@@ -117,10 +130,11 @@ func newModel(opts Options) *model {
 	sp.Spinner = spinner.Dot
 
 	m := &model{
-		opts:    opts,
-		th:      newTheme(opts.Color),
-		infos:   infos,
-		spinner: sp,
+		opts:     opts,
+		th:       newTheme(opts.Color),
+		infos:    infos,
+		branches: map[int][]gitinfo.BranchInfo{},
+		spinner:  sp,
 	}
 	if opts.WithSessions {
 		m.view = viewSessions
@@ -169,10 +183,16 @@ func (m *model) startRefresh() tea.Cmd {
 	m.pending = len(m.opts.Repos)
 	m.failed = nil
 
-	cmds := make([]tea.Cmd, 0, len(m.opts.Repos)+1)
+	cmds := make([]tea.Cmd, 0, 2*len(m.opts.Repos)+1)
 	cmds = append(cmds, m.spinner.Tick)
 	for i, r := range m.opts.Repos {
 		cmds = append(cmds, collectCmd(m.gens[v], i, r.Path, m.opts.NoFetch))
+	}
+	// Branch rows ride the same refresh, so they never go stale on screen
+	if m.branchMode {
+		for i, r := range m.opts.Repos {
+			cmds = append(cmds, branchesCmd(i, r.Path))
+		}
 	}
 	return tea.Batch(cmds...)
 }
@@ -191,6 +211,16 @@ func collectCmd(gen, index int, path string, noFetch bool) tea.Cmd {
 		info := gitinfo.Collect(path)
 		info.FetchFailed = fetchErr
 		return repoResultMsg{gen: gen, index: index, info: info, fetchErr: fetchErr}
+	}
+}
+
+// branchesCmd collects one repo's other local branches. Fast enough to run on
+// demand: it reads refs only and never fetches.
+func branchesCmd(index int, path string) tea.Cmd {
+	return func() tea.Msg {
+		sem <- struct{}{}
+		defer func() { <-sem }()
+		return branchesResultMsg{index: index, list: gitinfo.Branches(path)}
 	}
 }
 
@@ -225,6 +255,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pending == 0 {
 			m.finish(viewRepos)
 		}
+		return m, nil
+
+	case branchesResultMsg:
+		m.branches[msg.index] = msg.list
+		m.rebuild()
 		return m, nil
 
 	case sessionsResultMsg:
@@ -271,6 +306,9 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		return m, m.startRefresh()
 
+	case "tab":
+		return m, m.toggleBranchMode()
+
 	case "p":
 		m.view = (m.view + 1) % viewCount
 		m.rebuild()
@@ -302,6 +340,27 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// toggleBranchMode switches the repos view between one row per repo and one
+// row per branch. The first switch collects the branches; after that the rows
+// reuse what the refresh keeps up to date.
+func (m *model) toggleBranchMode() tea.Cmd {
+	if m.view != viewRepos {
+		return nil
+	}
+	m.branchMode = !m.branchMode
+	m.rebuild()
+	if !m.branchMode {
+		return nil
+	}
+	var cmds []tea.Cmd
+	for i, r := range m.opts.Repos {
+		if _, loaded := m.branches[i]; !loaded {
+			cmds = append(cmds, branchesCmd(i, r.Path))
+		}
+	}
+	return tea.Batch(cmds...)
+}
+
 func (m *model) finish(v view) {
 	m.refreshing[v] = false
 	m.loaded[v] = true
@@ -319,7 +378,11 @@ func (m *model) pane() *pane {
 // data or the window changed).
 func (m *model) rebuild() {
 	m.sessions.tbl = buildSessionTable(m.procList, m.th)
-	m.repos.tbl = buildTable(rows.Build(m.opts.Repos, m.infos), m.th)
+	rs := rows.Build(m.opts.Repos, m.infos)
+	if m.branchMode {
+		rs = rows.BranchView(m.opts.Repos, m.infos, m.branches)
+	}
+	m.repos.tbl = buildTable(rs, m.th)
 	m.snapCursor(1)
 	m.clampView()
 }
@@ -517,6 +580,7 @@ var helpRows = []struct{ key, desc string }{
 	{"j / k", "move"},
 	{"g / G", "top / bottom"},
 	{"ctrl+d / u", "half page"},
+	{"tab", "toggle branches (repos)"},
 	{"p", "switch view"},
 	{"r", "refresh now"},
 	{"?", "toggle help"},
@@ -645,6 +709,9 @@ func (m *model) statusBar() string {
 		m.th.bar.Render("last "+last) + sep +
 		m.th.bar.Render("every "+formatInterval(m.interval())) + sep +
 		m.th.bar.Render(count)
+	if m.view == viewRepos && m.branchMode {
+		left += sep + m.th.bar.Render("branches")
+	}
 	if m.view == viewRepos && m.opts.NoFetch {
 		left += sep + m.th.bar.Render("no-fetch")
 	}

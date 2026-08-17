@@ -3,7 +3,7 @@ package ui
 import "github.com/charmbracelet/lipgloss"
 
 // The meaning of the colors matches the plain output.
-// yellow = things you have to act on (changed / ahead) and fully open sessions / cyan = drift from remote (informational)
+// yellow = local changes to act on / red = gaps against the remote (ahead / behind) / cyan = unmerged commits (informational)
 // green = running session / red = detached / dim = 0, -, and idle
 // Every color is an ANSI-16 slot number only (so it follows the terminal
 // theme). The footer gets no band (background) — ANSI slot 0 is not the same as

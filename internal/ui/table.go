@@ -44,11 +44,10 @@ func toneOf(fixed func(theme) lipgloss.Style) func(string, theme) lipgloss.Style
 		if v == rows.Unsynced {
 			return th.warn
 		}
-		if render.Absent(v) {
+		// 0 keeps its character (measured, unlike the structural -) but sinks
+		// into dim, so only movement carries color
+		if render.Absent(v) || v == "0" {
 			return th.dim
-		}
-		if v == "0" {
-			return lipgloss.NewStyle()
 		}
 		return fixed(th)
 	}
@@ -61,7 +60,8 @@ var driftCols = []colDef{
 	// Unpushed commits are an inconsistency that has already happened as seen from
 	// another machine
 	{"AHEAD", true, func(r render.Row) string { return r.Ahead }, toneOf(func(t theme) lipgloss.Style { return t.danger })},
-	{"BEHIND", true, func(r render.Row) string { return r.Behind }, toneOf(func(t theme) lipgloss.Style { return t.remote })},
+	// Falling behind the remote reads as "needs action" too, so it shares red
+	{"BEHIND", true, func(r render.Row) string { return r.Behind }, toneOf(func(t theme) lipgloss.Style { return t.danger })},
 	{"UNMERGED", true, func(r render.Row) string { return r.Unmerged }, toneOf(func(t theme) lipgloss.Style { return t.remote })},
 }
 
@@ -85,6 +85,7 @@ type lineKind int
 const (
 	lineChrome lineKind = iota // Borders, headings, blank lines; the cursor never stops here
 	lineRepo
+	lineNote // Data cells rendered like lineRepo, but the cursor never stops here
 )
 
 type cell struct {
@@ -140,7 +141,11 @@ func buildTable(rs []render.Row, th theme) table {
 			v := c.value(r)
 			cells[i] = cell{text: pad(v, widths[i], c.right), style: cellStyle(c, r, v, th)}
 		}
-		t.lines = append(t.lines, tableLine{kind: lineRepo, group: group, cells: cells, ref: i})
+		kind := lineRepo
+		if r.Sub {
+			kind = lineNote
+		}
+		t.lines = append(t.lines, tableLine{kind: kind, group: group, cells: cells, ref: i})
 	}
 	if group != "" {
 		t.push(group, t.bottom())
@@ -218,7 +223,7 @@ func rightsOf(cols []colDef) []bool {
 // vertical line with the status bar.
 func (t table) renderLine(i int, selected bool, width int) string {
 	l := t.lines[i]
-	if l.kind != lineRepo {
+	if l.kind == lineChrome {
 		return clip(indent+l.text, width)
 	}
 
@@ -268,7 +273,9 @@ func countLabel(n int, unit string) string {
 func groupCounts(rs []render.Row) map[string]int {
 	c := map[string]int{}
 	for _, r := range rs {
-		c[r.Group]++
+		if !r.Sub {
+			c[r.Group]++
+		}
 	}
 	return c
 }

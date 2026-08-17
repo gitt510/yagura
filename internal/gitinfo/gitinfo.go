@@ -147,6 +147,51 @@ func Collect(path string) Info {
 	return info
 }
 
+// BranchInfo is one local branch's drift: the same columns as Info minus the
+// working tree, which belongs to HEAD only.
+type BranchInfo struct {
+	Name     string
+	Ahead    string
+	Behind   string
+	Unmerged string
+}
+
+// Branches lists the local branches other than the checked-out one, with the
+// same drift reads as Collect. It never fetches; the tracking refs are read
+// as they are.
+func Branches(path string) []BranchInfo {
+	refs, err := git(path, "for-each-ref", "refs/heads", "--format=%(HEAD)\t%(refname:short)")
+	if err != nil || refs == "" {
+		return nil
+	}
+	base, _ := git(path, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+
+	var out []BranchInfo
+	for _, line := range strings.Split(refs, "\n") {
+		marker, name, ok := strings.Cut(line, "\t")
+		if !ok || marker == "*" || name == "" {
+			continue
+		}
+		b := BranchInfo{Name: name, Ahead: Dash, Behind: Dash, Unmerged: Dash}
+		if counts, err := git(path, "rev-list", "--left-right", "--count", name+"@{upstream}..."+name); err == nil {
+			if f := strings.Fields(counts); len(f) >= 2 {
+				b.Behind, b.Ahead = f[0], f[1]
+			}
+		}
+		if base != "" {
+			if n, err := git(path, "rev-list", "--count", base+".."+name); err == nil {
+				b.Unmerged = n
+			}
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
+// ShortHead caps a branch name for display, the same cut Collect applies to
+// HEAD.
+func ShortHead(s string) string { return shorten(s, headMax) }
+
 func git(path string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", path}, args...)...)
 	var out bytes.Buffer
