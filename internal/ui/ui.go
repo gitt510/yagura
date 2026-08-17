@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"os/exec"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 // Options is the startup configuration.
 type Options struct {
 	Repos        []discover.Repo
+	TmuxSession  string   // tmux session that enter opens repos into, from config repos.tmux-session
 	Commands     []string // Process names to watch, from config sessions.commands
 	Roots        int      // Number of declared roots, shown in the bar
 	Warnings     []string // discover warnings, kept in the repos view footer
@@ -96,9 +98,16 @@ type model struct {
 
 	// branchMode is the repos view's second display mode: one row per local
 	// branch instead of one per repo. branches doubles as the loaded marker:
-	// a key that is present but empty means "collected, none"
+	// a key that is present but empty means "collected, none". reposRefs maps
+	// each repos-table data row back to its repo index
 	branchMode bool
 	branches   map[int][]gitinfo.BranchInfo
+	reposRefs  []int
+
+	// The last enter (open in tmux) outcome, shown in the footer until the
+	// next refresh
+	openMsg string
+	openErr bool
 	// loaded records whether each view has collected at least once, so switching
 	// to a view never leaves it empty
 	loaded [viewCount]bool
@@ -170,6 +179,7 @@ func (m *model) startRefresh() tea.Cmd {
 	}
 	m.gens[v]++
 	m.refreshing[v] = true
+	m.openMsg, m.openErr = "", false
 
 	if v == viewSessions {
 		return tea.Batch(m.spinner.Tick, sessionsCmd(m.gens[v], m.opts.Commands))
@@ -212,6 +222,39 @@ func collectCmd(gen, index int, path string, noFetch bool) tea.Cmd {
 		info.FetchFailed = fetchErr
 		return repoResultMsg{gen: gen, index: index, info: info, fetchErr: fetchErr}
 	}
+}
+
+// openResultMsg reports how opening a repo in tmux went. err is empty on
+// success.
+type openResultMsg struct {
+	repo    string
+	session string
+	err     string
+}
+
+// openCmd opens path as a new tmux window in session, creating the session
+// when it does not exist. tmux itself is required only on this path.
+func openCmd(session, path, name string) tea.Cmd {
+	return func() tea.Msg {
+		// = pins has-session to an exact name; without it, -t matches by prefix
+		if exec.Command("tmux", "has-session", "-t", "="+session).Run() != nil {
+			out, err := exec.Command("tmux", "new-session", "-d", "-s", session, "-c", path, "-n", name).CombinedOutput()
+			return openResult(name, session, out, err)
+		}
+		out, err := exec.Command("tmux", "new-window", "-t", session+":", "-c", path, "-n", name).CombinedOutput()
+		return openResult(name, session, out, err)
+	}
+}
+
+func openResult(name, session string, out []byte, err error) openResultMsg {
+	msg := openResultMsg{repo: name, session: session}
+	if err != nil {
+		msg.err = strings.TrimSpace(string(out))
+		if msg.err == "" {
+			msg.err = err.Error()
+		}
+	}
+	return msg
 }
 
 // branchesCmd collects one repo's other local branches. Fast enough to run on
@@ -262,6 +305,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rebuild()
 		return m, nil
 
+	case openResultMsg:
+		m.openMsg, m.openErr = "opened "+msg.repo+" in tmux session "+msg.session, false
+		if msg.err != "" {
+			m.openMsg, m.openErr = "tmux: "+msg.err, true
+		}
+		return m, nil
+
 	case sessionsResultMsg:
 		if msg.gen != m.gens[viewSessions] {
 			return m, nil
@@ -309,6 +359,9 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "tab":
 		return m, m.toggleBranchMode()
 
+	case "enter":
+		return m, m.openRepo()
+
 	case "p":
 		m.view = (m.view + 1) % viewCount
 		m.rebuild()
@@ -338,6 +391,38 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clampView()
 	}
 	return m, nil
+}
+
+// openRepo opens the focused repo in the declared tmux session: the path from
+// the lookout to the work site.
+func (m *model) openRepo() tea.Cmd {
+	if m.view != viewRepos {
+		return nil
+	}
+	idx, ok := m.focusedRepo()
+	if !ok {
+		return nil
+	}
+	if m.opts.TmuxSession == "" {
+		m.openMsg, m.openErr = "set repos.tmux-session in the config to open repos in tmux", true
+		return nil
+	}
+	r := m.opts.Repos[idx]
+	return openCmd(m.opts.TmuxSession, r.Path, r.Base)
+}
+
+// focusedRepo resolves the cursor to the repo it sits on. Focusable rows are
+// 1:1 with repos in both display modes.
+func (m *model) focusedRepo() (int, bool) {
+	p := &m.repos
+	if p.cursor < 0 || p.cursor >= len(p.tbl.lines) {
+		return 0, false
+	}
+	l := p.tbl.lines[p.cursor]
+	if l.kind != lineRepo || l.ref < 0 || l.ref >= len(m.reposRefs) {
+		return 0, false
+	}
+	return m.reposRefs[l.ref], true
 }
 
 // toggleBranchMode switches the repos view between one row per repo and one
@@ -381,6 +466,16 @@ func (m *model) rebuild() {
 	rs := rows.Build(m.opts.Repos, m.infos)
 	if m.branchMode {
 		rs = rows.BranchView(m.opts.Repos, m.infos, m.branches)
+	}
+	// Focusable (non-Sub) rows are 1:1 with repos in declaration order, so
+	// counting them recovers each row's repo index
+	m.reposRefs = make([]int, len(rs))
+	idx := -1
+	for i, r := range rs {
+		if !r.Sub {
+			idx++
+		}
+		m.reposRefs[i] = idx
 	}
 	m.repos.tbl = buildTable(rs, m.th)
 	m.snapCursor(1)
@@ -581,6 +676,7 @@ var helpRows = []struct{ key, desc string }{
 	{"g / G", "top / bottom"},
 	{"ctrl+d / u", "half page"},
 	{"tab", "toggle branches (repos)"},
+	{"enter", "open in tmux (repos)"},
 	{"p", "switch view"},
 	{"r", "refresh now"},
 	{"?", "toggle help"},
@@ -680,6 +776,13 @@ func (m *model) noticeLines() []string {
 	if len(m.failed) > 0 {
 		lines = append(lines, m.noticeLine(m.th.warnNote, "warn",
 			"fetch failed: "+strings.Join(m.failed, ", ")))
+	}
+	if m.openMsg != "" {
+		st, tag := m.th.note, "note"
+		if m.openErr {
+			st, tag = m.th.warnNote, "warn"
+		}
+		lines = append(lines, m.noticeLine(st, tag, m.openMsg))
 	}
 	return lines
 }

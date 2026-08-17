@@ -104,6 +104,7 @@ func run() int {
 
 	err = ui.Run(ui.Options{
 		Repos:            repos,
+		TmuxSession:      cfg.Repos.TmuxSession,
 		Commands:         cfg.Sessions.Commands,
 		SessionsInterval: time.Duration(cfg.Sessions.Interval),
 		ReposInterval:    time.Duration(cfg.Repos.Interval),

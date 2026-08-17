@@ -19,6 +19,7 @@ roots, and the agent CLI sessions running on the machine right now.
 - Every refresh fetches each repo with `--prune`
 - When a fetch fails, `AHEAD` / `BEHIND` / `UNMERGED` show `x` instead of stale numbers
 - Without any declared root, startup exits with setup instructions
+- `enter` opens the focused repo as a new window in the `repos.tmux-session` session (created if missing), with the repo path as cwd; the outcome lands in the footer
 - `tab` toggles branch mode: one row per local branch instead of one per repo — the default branch always first, the rest by name; the checked-out branch alone carries `CHANGED`, and the cursor sits on the row with the repo name; `AHEAD` / `BEHIND` count against each branch's own upstream, `UNMERGED` against `origin/HEAD`
 
 ## Sessions view
@@ -31,7 +32,7 @@ roots, and the agent CLI sessions running on the machine right now.
 ## Requirements
 
 - `git`, `ps`, and `lsof` in `PATH`
-- `tmux` is optional; without it the `TMUX` column shows `-`
+- `tmux` is optional; without it the `TMUX` column shows `-`, and it is required only when `enter` opens a repo
 
 ## Setup
 
@@ -56,6 +57,7 @@ yagura gh- --plain -n    # one-shot repos table, filtered, without fetch
 | --- | --- | --- |
 | `repos.roots` | — | roots to watch |
 | `repos.interval` | `"1m"` | refresh interval of the repos view |
+| `repos.tmux-session` | — | tmux session that `enter` opens repos into; unset keeps `enter` inert |
 | `sessions.commands` | `["claude"]` | process names to watch, matched against the command basename |
 | `sessions.interval` | `"10s"` | refresh interval of the sessions view |
 

@@ -30,6 +30,7 @@ roots = [
   "~/ghq/github.com/gitt510", # 直下の子を見る
   "~/dotfiles",
 ]
+tmux-session = "work"
 
 [sessions]
 commands = ["claude", "codex"]
@@ -43,6 +44,9 @@ commands = ["claude", "codex"]
 	}
 	if len(cfg.Sessions.Commands) != 2 || cfg.Sessions.Commands[1] != "codex" {
 		t.Errorf("commands = %v", cfg.Sessions.Commands)
+	}
+	if cfg.Repos.TmuxSession != "work" {
+		t.Errorf("tmux-session = %q, want work", cfg.Repos.TmuxSession)
 	}
 }
 
