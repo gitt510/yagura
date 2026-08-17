@@ -1,5 +1,5 @@
-// yagura は手元の見張り台。稼働中の agent CLI の session と、
-// 宣言した root 配下の repo の drift を表で出す。
+// yagura is a local lookout. It tabulates the sessions of running agent
+// CLIs and the drift of the repos under the declared roots.
 package main
 
 import (
@@ -19,7 +19,7 @@ import (
 	"github.com/gitt510/yagura/internal/ui"
 )
 
-// concurrency は fetch / git 収集で同時に走らせる repo 数。
+// concurrency is how many repos are fetched / inspected at once.
 const concurrency = 12
 
 const usage = `usage: yagura [query] [--root <dir>]... [--sessions] [-n|--no-fetch] [--plain] [--interval <dur>]
@@ -60,19 +60,19 @@ func run() int {
 		return 1
 	}
 
-	// flag は当日の上書き。宣言 (config) より優先する
+	// flags are one-off overrides; they win over the declaration (config)
 	if opts.interval != 0 {
 		cfg.Repos.Interval = config.Duration(opts.interval)
 	}
 
-	// sessions view は repo 宣言に紐づかない (root も query も要らない)
+	// the sessions view is not tied to the repo declaration (no root or query)
 	if opts.withSessions && (opts.plain || !isTTY()) {
 		return plainSessions(cfg.Sessions.Commands)
 	}
 
 	roots := opts.roots
 	if len(roots) == 0 {
-		// --root が 1 つでもあれば設定ファイルの roots は使わない (その場かぎりの上書き)
+		// any --root discards the config file roots (a one-off override)
 		roots = cfg.Repos.Roots
 	}
 
@@ -84,7 +84,7 @@ func run() int {
 			reposNote = "no roots declared: create " + config.Path()
 		}
 
-		// 既定の入口 (repos view) で何も出せないなら、TUI を開かず案内して終わる
+		// nothing to show at the default entry (repos view): guide and exit, no TUI
 		if !opts.withSessions {
 			for _, w := range warnings {
 				fmt.Fprintln(os.Stderr, w)
@@ -191,7 +191,7 @@ func parseArgs(args []string) (options, error) {
 	var opts options
 	var positional []string
 
-	// value 付き flag は `--x v` と `--x=v` の両方を受ける
+	// flags that take a value accept both `--x v` and `--x=v`
 	value := func(i *int, name string) (string, error) {
 		if v, ok := strings.CutPrefix(args[*i], name+"="); ok {
 			return v, nil
@@ -244,8 +244,9 @@ func parseArgs(args []string) (options, error) {
 	return opts, nil
 }
 
-// isTTY は端末かどうかを isatty で見る。ModeCharDevice だと /dev/null も
-// 端末と判定され、`yagura > /dev/null` が TUI を開こうとして失敗する。
+// isTTY reports whether stdout is a terminal, via isatty. ModeCharDevice
+// would call /dev/null a terminal too, so `yagura > /dev/null` would try to
+// open the TUI and fail.
 func isTTY() bool {
 	return term.IsTerminal(int(os.Stdout.Fd()))
 }

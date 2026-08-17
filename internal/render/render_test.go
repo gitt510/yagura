@@ -2,8 +2,8 @@ package render
 
 import "testing"
 
-// CPUMeter の約束: 0% は空、1% でも 1 マス立ち、100% 超は満杯で頭打ち。
-// 幅は常に meterWidth で揃う (表の列が揺れない)。
+// The CPUMeter contract: 0% is empty, even 1% lights one cell, and above 100%
+// it caps out full. The width is always meterWidth (the table column never shifts).
 func TestCPUMeter(t *testing.T) {
 	cases := map[int]string{
 		0:   "░░░░░",

@@ -7,8 +7,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// 自動更新の間隔は view ごとに独立。repos を procs の速さで回すと
-// git fetch が全 repo に高頻度で走ってしまう。
+// The auto-refresh interval is per view. Running repos at the procs rate would
+// fire git fetch across every repo far too often.
 func TestIntervalPerView(t *testing.T) {
 	m := newModel(Options{SessionsInterval: 10 * time.Second, ReposInterval: time.Minute})
 	if got := m.interval(); got != time.Minute {
@@ -20,7 +20,7 @@ func TestIntervalPerView(t *testing.T) {
 	}
 }
 
-// 0 単位を落とす処理は "10s" を "1" にしかねないので、境界を固定しておく。
+// Dropping zero units could turn "10s" into "1", so pin down the boundaries.
 func TestFormatInterval(t *testing.T) {
 	cases := map[string]string{
 		"1m":      "1m",
@@ -46,8 +46,9 @@ func TestFormatInterval(t *testing.T) {
 	}
 }
 
-// spliceLine の約束: x から幅 w だけ box に置き換わり、短い base は
-// 隙間を space で埋める。float が枠の途中の行でも列がずれないための基礎。
+// The contract of spliceLine: w cells starting at x are replaced by box, and a
+// short base has the gap filled with spaces. This is what keeps the columns
+// aligned when a float lands in the middle of a bordered line.
 func TestSpliceLine(t *testing.T) {
 	if got := spliceLine("abcdefghij", "XXX", 3, 3); got != "abcXXXghij" {
 		t.Errorf("spliceLine = %q, want abcXXXghij", got)
@@ -60,7 +61,7 @@ func TestSpliceLine(t *testing.T) {
 	}
 }
 
-// gradientLine の約束: 塗り分けても文字そのものは欠けない。
+// The contract of gradientLine: painting in segments never drops a character.
 func TestGradientLine(t *testing.T) {
 	plain := []lipgloss.Style{{}, {}, {}}
 	if got := gradientLine("abcdefg", plain); got != "abcdefg" {

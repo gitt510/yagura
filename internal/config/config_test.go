@@ -20,8 +20,9 @@ func writeConfig(t *testing.T, content string) {
 	}
 }
 
-// config の約束: feature ごとの table から読み、宣言順を保つ。
-// 知らない key は error、file なしは既定値で正常。
+// The config contract: read from one table per feature, preserving the order
+// of declaration. An unknown key is an error; a missing file is fine and
+// yields the defaults.
 func TestLoad(t *testing.T) {
 	writeConfig(t, `
 [repos]
@@ -45,7 +46,7 @@ commands = ["claude", "codex"]
 	}
 }
 
-// commands 未宣言なら claude だけを見る。
+// With commands undeclared, only claude is watched.
 func TestLoadDefaultCommands(t *testing.T) {
 	writeConfig(t, "[repos]\nroots = [\"~/dotfiles\"]\n")
 	cfg, err := Load()
@@ -57,8 +58,9 @@ func TestLoadDefaultCommands(t *testing.T) {
 	}
 }
 
-// interval の約束: "30s" 形式で読み、壊れた値と 0 以下は error、
-// 未宣言は view ごとの既定 (repos 1m / procs 10s)。
+// The interval contract: read in "30s" form; a broken value or zero or less
+// is an error; undeclared falls back to the per-view default
+// (repos 1m / procs 10s).
 func TestLoadIntervals(t *testing.T) {
 	writeConfig(t, "[repos]\ninterval = \"30s\"\n\n[sessions]\ninterval = \"5s\"\n")
 	cfg, err := Load()
@@ -110,7 +112,7 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
-// example が原本 (Config struct) どおりに読めることを保証する。
+// Guarantees the example decodes into the source of truth (the Config struct).
 func TestExampleDecodes(t *testing.T) {
 	writeConfig(t, Example)
 	cfg, err := Load()

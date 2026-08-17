@@ -9,8 +9,8 @@ import (
 	"github.com/gitt510/yagura/internal/render"
 )
 
-// fetch 失敗時の約束: remote 由来の列だけ x になり、local の事実と
-// 構造的な - はそのまま残る。
+// Contract on fetch failure: only the remote-derived columns turn into x;
+// local facts and the structural - stay as they are.
 func TestOneFetchFailed(t *testing.T) {
 	repo := discover.Repo{Group: "~/g", Base: "r"}
 	info := gitinfo.Info{
@@ -36,7 +36,8 @@ func TestOneFetchFailed(t *testing.T) {
 	}
 }
 
-// Sessions の約束: home は ~ に縮み、取れなかった値は - になり、cwd 順に並ぶ。
+// Sessions contract: home shrinks to ~, values that could not be read become
+// -, and rows are ordered by cwd.
 func TestSessions(t *testing.T) {
 	home := "/Users/t"
 	got := Sessions([]procs.Proc{
@@ -64,13 +65,13 @@ func TestSessions(t *testing.T) {
 	}
 }
 
-// git 合流の約束: cwd が git に載っていれば BRANCH / CHG が入り、
-// 載っていなければ - のまま。key は縮める前の実 path。
+// git join contract: if the cwd is in git, BRANCH / CHG are filled in;
+// if not, they stay -. The key is the real path, before shortening.
 func TestProcsGit(t *testing.T) {
 	git := map[string]gitinfo.Info{
 		"/Users/t/repo": {Changed: "2", Head: "feature", Branch: "feature", Base: "main"},
 	}
-	// cwd sort で ~/not-repo が先、~/repo が後に来る
+	// the cwd sort puts ~/not-repo first and ~/repo second
 	got := Sessions([]procs.Proc{
 		{PID: 300, CWD: "/Users/t/repo"},
 		{PID: 400, CWD: "/Users/t/not-repo"},
@@ -87,7 +88,8 @@ func TestProcsGit(t *testing.T) {
 	}
 }
 
-// CWDs の約束: 空の cwd は落とす。git を引く対象の一覧になる。
+// CWDs contract: empty cwds are dropped. This is the list of paths to look
+// up in git.
 func TestCWDs(t *testing.T) {
 	got := CWDs([]procs.Proc{{CWD: "/a"}, {CWD: ""}, {CWD: "/a"}})
 	if len(got) != 2 || got[0] != "/a" || got[1] != "/a" {
@@ -95,7 +97,8 @@ func TestCWDs(t *testing.T) {
 	}
 }
 
-// elapsedLabel の約束: etime の 4 形式を上位 2 単位に縮め、読めなければ -。
+// elapsedLabel contract: shorten the 4 etime formats to their top two units,
+// and use - when unparsable.
 func TestElapsedLabel(t *testing.T) {
 	cases := map[string]string{
 		"00:42":       "42s",
@@ -131,8 +134,9 @@ func TestCPUAndMemLabel(t *testing.T) {
 	}
 }
 
-// fishPath の約束: 最後の要素だけ残して頭文字に縮める。
-// 隠し directory は 2 文字、~ と根の / と最終要素は縮まない。
+// fishPath contract: keep only the last element and shorten the rest to
+// initials. Hidden directories keep 2 characters; ~, the root /, and the
+// last element are not shortened.
 func TestFishPath(t *testing.T) {
 	cases := map[string]string{
 		"~/ghq/github.com/gitt510/yagura": "~/g/g/g/yagura",

@@ -10,10 +10,11 @@ import (
 	"testing"
 )
 
-// 色は ANSI-16 の slot 番号だけで表現し、実際の色味は端末テーマに委ねる。
-// 256色 (38;5;N) / truecolor (38;2;R;G;B) / hex は端末テーマに追従しない固定色に
-// なるため、repo 全体で禁止する。色を書ける場所も theme.go (lipgloss) と
-// render.go (生 SGR) の2箇所に限定する。
+// Colors are expressed only as ANSI-16 slot numbers, leaving the actual hues to
+// the terminal theme. 256-color (38;5;N) / truecolor (38;2;R;G;B) / hex become
+// fixed colors that do not follow the terminal theme, so they are banned across
+// the whole repo. Where colors may be written is also limited to two places:
+// theme.go (lipgloss) and render.go (raw SGR).
 func TestANSI16Only(t *testing.T) {
 	var (
 		sgrExtended = regexp.MustCompile(`[34]8;[25];`)

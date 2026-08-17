@@ -1,8 +1,9 @@
-// Package discover は宣言された root から対象 repo を洗い出す。
+// Package discover finds the target repos under the declared roots.
 //
-// 規則は 2 つだけ。root 自身が repo ならそれが対象、そうでなければ
-// 1 段下の子だけを見る。再帰はしない。深く掘らないので、どこが対象に
-// なるかを宣言だけから読み切れる。
+// There are only two rules. If a root is itself a repo, that root is the
+// target; otherwise only its immediate children are considered. No
+// recursion. Because it never digs deep, the declarations alone tell you
+// exactly which repos are in scope.
 package discover
 
 import (
@@ -13,16 +14,17 @@ import (
 	"strings"
 )
 
-// Repo は 1 行ぶんの repo 識別情報。
+// Repo identifies a single repo, one table row's worth.
 type Repo struct {
-	Path  string // symlink を解いた絶対パス
-	Name  string // 表示用のフルパス ($HOME は ~)
-	Group string // 宣言された root ($HOME は ~)。表の器になる
-	Base  string // repo 名
+	Path  string // absolute path with symlinks resolved
+	Name  string // full path for display ($HOME shown as ~)
+	Group string // declared root ($HOME shown as ~); the table's container
+	Base  string // repo name
 }
 
-// Repos は roots を宣言順に辿り、見つけた repo と非致命的な警告を返す。
-// query は repo の絶対パスに対する部分一致。空なら全件。
+// Repos walks roots in declaration order and returns the repos it found
+// along with non-fatal warnings. query is a substring match against the
+// repo's absolute path; empty matches everything.
 func Repos(roots []string, query string) ([]Repo, []string) {
 	var (
 		repos    []Repo
@@ -33,7 +35,7 @@ func Repos(roots []string, query string) ([]Repo, []string) {
 	for _, decl := range roots {
 		label, resolved, err := resolveRoot(decl)
 		if err != nil {
-			// 宣言が 1 つ古いだけで表全体を殺さない
+			// one stale declaration must not kill the whole table
 			warnings = append(warnings, fmt.Sprintf("cannot resolve root: %s: %s", label, reason(err)))
 			continue
 		}
@@ -49,7 +51,7 @@ func Repos(roots []string, query string) ([]Repo, []string) {
 		}
 
 		for _, r := range found {
-			// 宣言が重なっても 1 度だけ。先に宣言した root の並びが勝つ
+			// list a repo once even if roots overlap; the earlier root wins
 			if seen[r.Path] || !strings.Contains(r.Path, query) {
 				continue
 			}
@@ -61,7 +63,7 @@ func Repos(roots []string, query string) ([]Repo, []string) {
 	return repos, warnings
 }
 
-// scan は 2 つの規則を適用する。
+// scan applies the two rules.
 func scan(label, root string) ([]Repo, error) {
 	if isRepo(root) {
 		return []Repo{{
@@ -72,7 +74,8 @@ func scan(label, root string) ([]Repo, error) {
 		}}, nil
 	}
 
-	// os.ReadDir は名前順に返すので、root 内の並びはそれに従う
+	// os.ReadDir returns entries sorted by name, so ordering within a root
+	// follows that
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
@@ -80,8 +83,9 @@ func scan(label, root string) ([]Repo, error) {
 
 	var repos []Repo
 	for _, e := range entries {
-		// symlink の子は辿らない。追いたい先は root として宣言してもらう。
-		// ReadDir の DirEntry は symlink を dir と見ないので IsDir だけで落ちる
+		// don't follow symlinked children; declare the target as a root
+		// instead. ReadDir's DirEntry doesn't report a symlink as a dir,
+		// so IsDir alone drops them
 		if !e.IsDir() {
 			continue
 		}
@@ -99,15 +103,16 @@ func scan(label, root string) ([]Repo, error) {
 	return repos, nil
 }
 
-// isRepo は .git があるかだけを見る。worktree の .git は file なので種類は問わない。
-// bare repo は .git を持たないので、ここで自然に外れる。
+// isRepo only checks whether .git exists. A worktree's .git is a file, so
+// the kind doesn't matter. A bare repo has no .git, so it drops out here.
 func isRepo(dir string) bool {
 	_, err := os.Lstat(filepath.Join(dir, ".git"))
 	return err == nil
 }
 
-// resolveRoot は宣言を表示用の label と、走査用に symlink を解いた実体に分ける。
-// label が宣言のままなのは、symlink の宣言を解決後の姿に化けさせないため。
+// resolveRoot splits a declaration into a label for display and the
+// symlink-resolved path used for scanning. The label stays as declared so a
+// symlinked declaration doesn't morph into its resolved form.
 func resolveRoot(decl string) (label, resolved string, err error) {
 	abs, err := filepath.Abs(expand(strings.TrimSpace(decl)))
 	if err != nil {
@@ -150,7 +155,7 @@ func abbreviate(path string) string {
 	return path
 }
 
-// reason は PathError の重複したパス表示を落として読みやすくする。
+// reason strips PathError's redundant path echo to keep the message readable.
 func reason(err error) string {
 	var pe *os.PathError
 	if errors.As(err, &pe) {

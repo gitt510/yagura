@@ -1,7 +1,8 @@
-// Package config は設定ファイル (TOML) を読む。Config struct が config の
-// 原本で、feature ごとの table (repos / procs) に分かれる。field を足すときは
-// ここに toml tag 付きで足し、config.example.toml に例を足す。example が
-// 原本どおりに読めることは test が保証する。
+// Package config reads the config file (TOML). The Config struct is the
+// source of truth, split into one table per feature (repos / procs). To add
+// a field, add it here with a toml tag and add an example to
+// config.example.toml. A test guarantees the example decodes into the
+// source of truth.
 package config
 
 import (
@@ -17,38 +18,42 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// Config が config の原本。table 名 = feature 名。
+// Config is the source of truth. Table name = feature name.
 type Config struct {
 	Repos    Repos    `toml:"repos"`
 	Sessions Sessions `toml:"sessions"`
 }
 
-// Repos は repos view (drift) の設定。
+// Repos configures the repos view (drift).
 type Repos struct {
 	Roots []string `toml:"roots"`
-	// Interval は自動更新の間隔。fetch を伴うので procs より遅い既定
+	// Interval is the auto-refresh interval. It fetches, so the default is
+	// slower than procs
 	Interval Duration `toml:"interval"`
 }
 
-// Sessions は sessions view の設定。
+// Sessions configures the sessions view.
 type Sessions struct {
-	// Commands は監視する process 名。comm の basename に一致させる
+	// Commands are the process names to watch, matched against the
+	// basename of comm
 	Commands []string `toml:"commands"`
-	// Interval は自動更新の間隔。収集が軽い (fetch なし) ので速い既定
+	// Interval is the auto-refresh interval. Collection is cheap (no fetch),
+	// so the default is fast
 	Interval Duration `toml:"interval"`
 }
 
-// 未宣言時の既定値。挙動の既定はすべてここに集める。
+// Defaults for anything left undeclared. Every behavioral default lives here.
 var (
 	defaultCommands         = []string{"claude"}
 	defaultReposInterval    = Duration(time.Minute)
 	defaultSessionsInterval = Duration(10 * time.Second)
 )
 
-// Duration は TOML の文字列 ("30s" / "1m") を time.Duration として読む。
+// Duration reads a TOML string ("30s" / "1m") as a time.Duration.
 type Duration time.Duration
 
-// UnmarshalText は toml の decode 点。0 以下は監視が止まるので拒否する。
+// UnmarshalText is the toml decode hook. Zero or less would stop the
+// watching, so it is rejected.
 func (d *Duration) UnmarshalText(b []byte) error {
 	v, err := time.ParseDuration(string(b))
 	if err != nil {
@@ -61,15 +66,15 @@ func (d *Duration) UnmarshalText(b []byte) error {
 	return nil
 }
 
-// Example は同梱の設定例。setup 案内と repo 内の文書を同一物にするため
-// embed で持つ。
+// Example is the bundled config example. It is embedded so that the setup
+// guidance and the document in the repo are one and the same.
 //
 //go:embed config.example.toml
 var Example string
 
-// Path は設定ファイルの場所。
-// os.UserConfigDir を使わないのは、darwin だと Library/Application Support を
-// 指してしまい、~/.config に置く前提と合わないため。
+// Path is where the config file lives.
+// os.UserConfigDir is avoided because on darwin it points at
+// Library/Application Support, which does not match the ~/.config premise.
 func Path() string {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
@@ -82,9 +87,9 @@ func Path() string {
 	return filepath.Join(base, "yagura", "config.toml")
 }
 
-// Load は設定ファイルを読む。知らない key は typo の可能性が高いので
-// 黙って捨てず error にする。ファイルが無いのは異常ではないので
-// 既定値だけの Config を返す。
+// Load reads the config file. An unknown key is most likely a typo, so it is
+// an error rather than silently dropped. A missing file is not a fault, so it
+// returns a Config holding only the defaults.
 func Load() (Config, error) {
 	var c Config
 	md, err := toml.DecodeFile(Path(), &c)
@@ -108,7 +113,7 @@ func Load() (Config, error) {
 	return c, nil
 }
 
-// Skeleton は setup 案内に埋め込む用に Example を indent したもの。
+// Skeleton is Example indented for embedding in the setup guidance.
 func Skeleton() string {
 	var b strings.Builder
 	for line := range strings.Lines(Example) {

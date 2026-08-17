@@ -1,5 +1,5 @@
-// sessions view の固有部分。収集 cmd と表の組み立てをこの file に閉じ、
-// ui.go 側は view の配線だけ持つ。
+// The parts specific to the sessions view. The collection cmd and the table
+// assembly are confined to this file, leaving ui.go with only the view wiring.
 package ui
 
 import (
@@ -19,8 +19,8 @@ type sessionsResultMsg struct {
 	list []render.SessionRow
 }
 
-// sessionsCmd は稼働中の session を 1 回で引く。監視対象は config 由来。
-// 各 session の repo は fetch せず local の事実だけ読む。
+// sessionsCmd collects the running sessions in one pass. What to watch comes
+// from the config. Each session's repo is read for local facts only, no fetch.
 func sessionsCmd(gen int, commands []string) tea.Cmd {
 	return func() tea.Msg {
 		home, _ := os.UserHomeDir()
@@ -30,9 +30,11 @@ func sessionsCmd(gen int, commands []string) tea.Cmd {
 	}
 }
 
-// buildSessionTable は command ごとに独立した枠付きの表を積む。repos の
-// buildTable と同じ文法で、group 見出しが「どの command か」の annotation。
-// 列幅は全 group で共通にして、cursor が表を渡っても列位置が動かないようにする。
+// buildSessionTable stacks an independent bordered table per command. It uses
+// the same grammar as the repos buildTable, with the group heading annotating
+// which command it is.
+// Column widths are shared across all groups, so the column positions do not
+// move as the cursor crosses from one table to the next.
 func buildSessionTable(rs []render.SessionRow, th theme) table {
 	widths := make([]int, len(render.SessionColumns))
 	headers := make([]string, len(render.SessionColumns))
@@ -80,9 +82,9 @@ func buildSessionTable(rs []render.SessionRow, th theme) table {
 	return t
 }
 
-// sessionStyle は sessions view の cell の色。BRANCH は drift の HEAD と
-// 同じ意味づけ、CHANGED は「要対応」の yellow。CPU は判定ではなく、
-// 動きの無い 0% を沈めるだけ。
+// sessionStyle is the cell coloring for the sessions view. BRANCH carries the
+// same meaning as HEAD in drift, CHANGED is the "needs action" yellow. CPU is
+// not a judgement; it only sinks an idle 0%.
 func sessionStyle(header string, r render.SessionRow, v string, th theme) lipgloss.Style {
 	switch header {
 	case "CPU":

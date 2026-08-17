@@ -10,7 +10,8 @@ import (
 	"github.com/gitt510/yagura/internal/rows"
 )
 
-// 枠は box-drawing で組む。色ではなく形なので NO_COLOR でも残る。
+// Borders are drawn with box-drawing characters. They are shape rather than
+// color, so they survive NO_COLOR.
 const (
 	cornerTL = "╭"
 	cornerTR = "╮"
@@ -26,7 +27,8 @@ const (
 
 	cursorMark = "▸"
 
-	// indent は画面左の margin。status bar の先頭 space と縦を揃える
+	// indent is the left margin of the screen, aligned vertically with the leading
+	// space of the status bar
 	indent = " "
 )
 
@@ -56,13 +58,15 @@ var driftCols = []colDef{
 	{"REPO", false, func(r render.Row) string { return r.Repo }, nil},
 	{"HEAD", false, func(r render.Row) string { return r.Head }, nil},
 	{"CHANGED", true, func(r render.Row) string { return r.Changed }, toneOf(func(t theme) lipgloss.Style { return t.local })},
-	// 未 push の commit は他の machine から見て既に起きている不整合
+	// Unpushed commits are an inconsistency that has already happened as seen from
+	// another machine
 	{"AHEAD", true, func(r render.Row) string { return r.Ahead }, toneOf(func(t theme) lipgloss.Style { return t.danger })},
 	{"BEHIND", true, func(r render.Row) string { return r.Behind }, toneOf(func(t theme) lipgloss.Style { return t.remote })},
 	{"UNMERGED", true, func(r render.Row) string { return r.Unmerged }, toneOf(func(t theme) lipgloss.Style { return t.remote })},
 }
 
-// default branch は平常時なので素の色のまま、外れている branch だけ立てる。
+// The default branch is the normal case, so it keeps the plain color; only a
+// branch off it stands out.
 func headTone(s render.HeadState, th theme) lipgloss.Style {
 	switch s {
 	case render.HeadDefault:
@@ -79,7 +83,7 @@ func headTone(s render.HeadState, th theme) lipgloss.Style {
 type lineKind int
 
 const (
-	lineChrome lineKind = iota // 枠・見出し・空行。cursor は止まらない
+	lineChrome lineKind = iota // Borders, headings, blank lines; the cursor never stops here
 	lineRepo
 )
 
@@ -91,9 +95,9 @@ type cell struct {
 type tableLine struct {
 	kind  lineKind
 	group string
-	text  string // chrome 行は組み立て済み
+	text  string // Chrome lines come pre-assembled
 	cells []cell
-	// ref は元データでの位置。chrome 行は -1
+	// ref is the position in the source data; -1 for chrome lines
 	ref int
 }
 
@@ -103,8 +107,9 @@ type table struct {
 	th     theme
 }
 
-// buildTable は group ごとに独立した枠付きの表を積む。
-// 列幅は全 group で共通にして、cursor が表を渡っても列位置が動かないようにする。
+// buildTable stacks an independent bordered table per group.
+// Column widths are shared across all groups, so the column positions do not
+// move as the cursor crosses from one table to the next.
 func buildTable(rs []render.Row, th theme) table {
 	cols := driftCols
 
@@ -143,7 +148,8 @@ func buildTable(rs []render.Row, th theme) table {
 	return t
 }
 
-// cellStyle は REPO / HEAD だけ列定義に持たせず、行の状態から決める。
+// cellStyle leaves REPO / HEAD out of the column definitions and derives them
+// from the row's state instead.
 func cellStyle(c colDef, r render.Row, v string, th theme) lipgloss.Style {
 	switch c.header {
 	case "REPO":
@@ -159,7 +165,8 @@ func (t *table) push(group, text string) {
 	t.lines = append(t.lines, tableLine{kind: lineChrome, group: group, text: text, ref: -1})
 }
 
-// top は上辺の罫線。下辺の ┴ と対称に ┬ で列を受ける。表の名前は枠の外に出す。
+// top is the upper rule. It takes the columns with ┬, symmetric to the ┴ on the
+// bottom rule. The table's name goes outside the border.
 func (t table) top() string {
 	return t.th.border.Render(cornerTL + strings.Join(t.dashes(), teeDown) + cornerTR)
 }
@@ -206,8 +213,9 @@ func rightsOf(cols []colDef) []bool {
 	return out
 }
 
-// renderLine は 1 行を組む。selected なら枠の内側だけ背景を敷く。
-// 全行に indent を敷き、画面左の縦ラインを status bar と揃える。
+// renderLine assembles one line. When selected, the background covers only the
+// inside of the border. Every line gets the indent, aligning the screen's left
+// vertical line with the status bar.
 func (t table) renderLine(i int, selected bool, width int) string {
 	l := t.lines[i]
 	if l.kind != lineRepo {
@@ -224,14 +232,15 @@ func (t table) renderLine(i int, selected bool, width int) string {
 	var b strings.Builder
 	b.WriteString(indent)
 	for i, c := range l.cells {
-		// 外枠は素の色のまま。内側の仕切りは背景を継いで帯を切らさない
+		// The outer border keeps its plain color; the inner dividers inherit the
+		// background so the band is not cut
 		if i == 0 {
 			b.WriteString(t.th.border.Render(barV))
 		} else {
 			b.WriteString(innerBar.Render(barV))
 		}
 
-		// cursor 印は左の余白を潰して置く。列の開始位置を動かさないため
+		// The cursor mark takes over the left padding so the columns do not shift
 		leftPad := pads
 		left := " "
 		if i == 0 && selected {
@@ -274,7 +283,8 @@ func maxWidth(header string, rs []render.Row, value func(render.Row) string) int
 	return w
 }
 
-// 幅は rune 数ではなく表示幅で数える。path に全角が入り得る。
+// Width is counted as display width, not rune count; paths may contain
+// full-width characters.
 func pad(s string, w int, right bool) string {
 	fill := w - lipgloss.Width(s)
 	if fill <= 0 {
@@ -286,7 +296,8 @@ func pad(s string, w int, right bool) string {
 	return s + strings.Repeat(" ", fill)
 }
 
-// clip は端末幅で切る。折り返させると行数が合わなくなる。
+// clip cuts at the terminal width; letting lines wrap would throw off the line
+// count.
 func clip(s string, width int) string {
 	if width <= 0 {
 		return s

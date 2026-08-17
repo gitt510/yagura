@@ -1,5 +1,5 @@
-// Package render は収集済みの行を plain table に落とす。
-// TUI とは別実装で、こちらは 1 度書いて終わる出力だけを受け持つ。
+// Package render turns collected rows into a plain table.
+// It is separate from the TUI: this side only handles write-once output.
 package render
 
 import (
@@ -10,23 +10,23 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// HeadState は HEAD が default branch とどういう関係にあるか。
-// plain 出力は使わない (HEAD 列に色を付けないため) が、TUI が見せ方を変える。
+// HeadState is how HEAD relates to the default branch. Plain output ignores
+// it (the HEAD column is never colored), but the TUI presents it differently.
 type HeadState int
 
 const (
-	HeadUnknown  HeadState = iota // 基準 (origin/HEAD) が引けない、または収集前
-	HeadDefault                   // default branch の上に居る
-	HeadBranch                    // default 以外の branch
-	HeadDetached                  // branch に居ない
+	HeadUnknown  HeadState = iota // no baseline (origin/HEAD) available, or not collected yet
+	HeadDefault                   // sitting on the default branch
+	HeadBranch                    // on a branch other than the default
+	HeadDetached                  // not on a branch at all
 )
 
-// Row は 1 repo ぶんの drift 表示値。すべて整形済みの文字列。
+// Row is the drift display values for a single repo, all preformatted strings.
 type Row struct {
 	Group string
 	Repo  string
 	Head  string
-	// HeadState は Head の中身の意味づけ。文字列から推測させないために持たせる
+	// HeadState gives meaning to what Head holds, so nobody has to infer it from the string
 	HeadState HeadState
 
 	Changed  string
@@ -35,9 +35,9 @@ type Row struct {
 	Unmerged string
 }
 
-// SessionRow は 1 session ぶんの表示値。すべて整形済みの文字列。
-// Cmd は表の group (どの command か)。Branch / Changed は cwd が repo の
-// 中だったときだけ入り、外なら - で来る。
+// SessionRow is the display values for a single session, all preformatted
+// strings. Cmd is the table's group (which command it is). Branch / Changed
+// are filled in only when cwd was inside a repo, and arrive as - when outside.
 type SessionRow struct {
 	Cmd       string
 	CWD       string
@@ -52,11 +52,11 @@ type SessionRow struct {
 	Mem       string
 }
 
-// meterWidth は CPU meter のマス数。
+// meterWidth is the number of cells in the CPU meter.
 const meterWidth = 5
 
-// CPUMeter は %cpu を固定幅の bar にする。1% でも 1 マス立てて「生きてる」を
-// 見せる。100% 超 (複数 core) は満杯で頭打ち。
+// CPUMeter turns %cpu into a fixed-width bar. Even 1% lights one cell, to
+// show it is alive. Above 100% (multiple cores) it caps out full.
 func CPUMeter(pct int) string {
 	fill := (pct*meterWidth + 99) / 100
 	if fill < 0 {
@@ -68,8 +68,8 @@ func CPUMeter(pct int) string {
 	return strings.Repeat("█", fill) + strings.Repeat("░", meterWidth-fill)
 }
 
-// SessionColumns は sessions view の列定義。plain と TUI で共有する。
-// Cmd は列ではなく group 見出しとして出す。
+// SessionColumns is the column definition for the sessions view, shared by
+// plain and TUI. Cmd is emitted as a group heading rather than a column.
 var SessionColumns = []struct {
 	Header string
 	Right  bool
@@ -81,13 +81,13 @@ var SessionColumns = []struct {
 	{"TMUX", false, func(r SessionRow) string { return r.Tmux }},
 	{"PID", true, func(r SessionRow) string { return r.PID }},
 	{"ELAPSED", true, func(r SessionRow) string { return r.Elapsed }},
-	// meter が先、% が固定幅で後。右寄せでも meter の縦が揃う
+	// Meter first, % second at a fixed width, so the meters line up even right-aligned
 	{"CPU", true, func(r SessionRow) string { return CPUMeter(r.CPUPct) + " " + padLeft(r.CPU, 4) }},
 	{"MEM", true, func(r SessionRow) string { return r.Mem }},
 }
 
-// Absent は沈める値。取れなかった / 該当が無い / 収集前。
-// 0 は「観測できた事実」なので沈めず素の色で出す。
+// Absent reports the values to mute: unreadable, not applicable, or not
+// collected yet. 0 is an observed fact, so it stays unmuted in the plain color.
 func Absent(v string) bool { return v == "-" || v == "…" || v == "" }
 
 type palette struct {
@@ -100,18 +100,18 @@ type column struct {
 	tone   func(v string, p palette) string
 }
 
-// 数値列。REPO / HEAD だけが可変幅の左寄せで、あとは右寄せ。
+// Numeric columns. Only REPO / HEAD are variable-width and left-aligned; the rest are right-aligned.
 var driftColumns = []column{
-	// 手元にしか無い = 失うと戻せない
+	// Exists only locally = unrecoverable once lost
 	{"CHANGED", func(r Row) string { return r.Changed }, func(_ string, p palette) string { return p.yellow }},
-	// 未 push の commit は他の machine から見て既に起きている不整合
+	// Unpushed commits are, from another machine, an inconsistency that already exists
 	{"AHEAD", func(r Row) string { return r.Ahead }, func(_ string, p palette) string { return p.red }},
-	// remote との差 = 情報
+	// A gap against the remote = information
 	{"BEHIND", func(r Row) string { return r.Behind }, func(_ string, p palette) string { return p.cyan }},
 	{"UNMERGED", func(r Row) string { return r.Unmerged }, func(_ string, p palette) string { return p.cyan }},
 }
 
-// Table は group ごとに見出しと列見出しを繰り返しながら drift 表を書く。
+// Table writes the drift table, repeating the heading and column headers per group.
 func Table(w io.Writer, rows []Row, useColor bool) {
 	if len(rows) == 0 {
 		return
@@ -133,7 +133,7 @@ func Table(w io.Writer, rows []Row, useColor bool) {
 
 	group := ""
 	for i, r := range rows {
-		// 列見出しも group ごとに繰り返して、どの行がどの列かを離れて読まなくて済むようにする
+		// Repeat the column headers per group too, so no one has to read far away to tell which cell is which column
 		if r.Group != group {
 			group = r.Group
 			if i > 0 {
@@ -145,7 +145,7 @@ func Table(w io.Writer, rows []Row, useColor bool) {
 		cells := make([]string, len(driftColumns))
 		for j, c := range driftColumns {
 			v := c.value(r)
-			// 不在だけ沈める。0 は素の色、動きのある数字は列の色で立てる
+			// Mute only what is absent. 0 stays plain; numbers with movement take the column color
 			tone := ""
 			if Absent(v) {
 				tone = p.dim
@@ -158,8 +158,8 @@ func Table(w io.Writer, rows []Row, useColor bool) {
 	}
 }
 
-// SessionTable は group (command) ごとに見出しと列見出しを繰り返しながら
-// session 表を書く。repos の Table と同じ文法。
+// SessionTable writes the session table, repeating the heading and column
+// headers per group (command). Same grammar as Table for repos.
 func SessionTable(w io.Writer, rows []SessionRow, useColor bool) {
 	if len(rows) == 0 {
 		return
@@ -194,8 +194,9 @@ func SessionTable(w io.Writer, rows []SessionRow, useColor bool) {
 	}
 }
 
-// sessionTone は plain 出力での sessions view の色。CHANGED は drift と同じ
-// 「要対応」の yellow。CPU は判定ではなく、動きの無い 0% を沈めるだけ。
+// sessionTone is the coloring of the sessions view in plain output. CHANGED
+// gets the same "needs attention" yellow as drift. CPU makes no judgement; it
+// only mutes an idle 0%.
 func sessionTone(header string, r SessionRow, v string, p palette) string {
 	switch header {
 	case "CPU":
@@ -226,7 +227,7 @@ func alignProc(v string, w int, right bool) string {
 	return padRight(v, w)
 }
 
-// Notice は表を壊さない補足行 (dim)。
+// Notice writes a supplementary line (dim) that does not break the table.
 func Notice(w io.Writer, msg string, useColor bool) {
 	p := newPalette(useColor)
 	fmt.Fprintln(w, paint(msg, p.dim, p.off))

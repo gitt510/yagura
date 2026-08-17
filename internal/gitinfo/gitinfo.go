@@ -1,4 +1,4 @@
-// Package gitinfo は repo ごとの working-tree / upstream / default-branch drift を集める。
+// Package gitinfo collects per-repo working-tree / upstream / default-branch drift.
 package gitinfo
 
 import (
@@ -9,40 +9,42 @@ import (
 	"sync"
 )
 
-// headMax は病的に長い branch 名で表が壊れないための表示上限。
+// headMax is the display cap that keeps pathologically long branch names
+// from breaking the table.
 const headMax = 32
 
-// Dash は「該当なし / 取得不能」を表す表示値。
+// Dash is the display value for "not applicable / could not be read".
 const Dash = "-"
 
-// Info は 1 repo ぶんの収集結果。値は表示用の文字列で持つ。
+// Info is what was collected for one repo. Values are held as display strings.
 type Info struct {
 	Changed  string
-	Head     string // 表示用。detached なら (short-sha)、headMax で切る
-	Branch   string // detached のときは空
-	Base     string // origin/HEAD の branch 名 (origin/ を落としたもの)。不明なら空
+	Head     string // for display; (short-sha) when detached, cut at headMax
+	Branch   string // empty when detached
+	Base     string // origin/HEAD's branch name (origin/ stripped); empty if unknown
 	Detached bool
 	Ahead    string
 	Behind   string
 	Unmerged string
-	// FetchFailed は fetch できず remote-tracking が古いまま collect した印。
-	// fetch の成否は Collect の外で決まるので、呼び元が立てる
+	// FetchFailed marks that fetch failed and collection ran against a stale
+	// remote-tracking ref. Whether fetch succeeded is decided outside
+	// Collect, so the caller sets this
 	FetchFailed bool
 }
 
-// FetchRepo は 1 repo を fetch する。
+// FetchRepo fetches a single repo.
 func FetchRepo(path string) error {
-	// prune: remote branch が消えた tracking ref は 0/0 を報告し続ける
+	// prune: a tracking ref whose remote branch is gone keeps reporting 0/0
 	_, err := git(path, "fetch", "--quiet", "--prune")
 
-	// UNMERGED の基準 ref が無い repo だけ、ここで引き直す
+	// re-resolve here only for repos with no reference ref for UNMERGED
 	if _, e := git(path, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"); e != nil {
 		_, _ = git(path, "remote", "set-head", "origin", "--auto")
 	}
 	return err
 }
 
-// Fetch は各 repo を並列に fetch し、失敗した repo の path を返す。
+// Fetch fetches each repo in parallel and returns the paths that failed.
 func Fetch(paths []string, limit int) []string {
 	var mu sync.Mutex
 	var failed []string
@@ -58,7 +60,7 @@ func Fetch(paths []string, limit int) []string {
 	return failed
 }
 
-// CollectAll は paths と同じ順序で Info を返す。
+// CollectAll returns Info in the same order as paths.
 func CollectAll(paths []string, limit int) []Info {
 	infos := make([]Info, len(paths))
 	idx := make(map[string]int, len(paths))
@@ -76,10 +78,10 @@ func CollectAll(paths []string, limit int) []Info {
 	return infos
 }
 
-// ForDirs は work tree の中にある dir だけ Collect し、dir → Info で返す。
-// repo でない dir (見つからない dir を含む) は結果に載らない。
-// session の cwd は repo の subdirectory のこともあるので、
-// .git の有無ではなく git 自身に居場所を訊く。
+// ForDirs collects only the dirs that sit inside a work tree and returns
+// dir -> Info. Dirs that aren't repos (including missing ones) are omitted.
+// A session's cwd can be a subdirectory of the repo, so ask git itself
+// where it is rather than looking for .git.
 func ForDirs(dirs []string, limit int) map[string]Info {
 	uniq := make([]string, 0, len(dirs))
 	seen := map[string]bool{}
@@ -109,14 +111,14 @@ func inWorkTree(path string) bool {
 	return err == nil && out == "true"
 }
 
-// Collect は 1 repo ぶんの drift を読む。
+// Collect reads the drift for a single repo.
 func Collect(path string) Info {
 	info := Info{Changed: "0", Ahead: Dash, Behind: Dash, Unmerged: Dash}
 
 	status, _ := git(path, "status", "--porcelain")
 	info.Changed = strconv.Itoa(countLines(status))
 
-	// 空 = detached。そのとき HEAD は branch ではなく commit を指す
+	// empty = detached; HEAD then points at a commit, not a branch
 	branch, _ := git(path, "branch", "--show-current")
 	info.Branch = branch
 	head := branch
@@ -127,14 +129,14 @@ func Collect(path string) Info {
 	}
 	info.Head = shorten(head, headMax)
 
-	// left = behind, right = ahead。upstream を持たない HEAD は dash
+	// left = behind, right = ahead; a HEAD with no upstream stays dash
 	if counts, err := git(path, "rev-list", "--left-right", "--count", "@{upstream}...HEAD"); err == nil {
 		if f := strings.Fields(counts); len(f) >= 2 {
 			info.Behind, info.Ahead = f[0], f[1]
 		}
 	}
 
-	// default branch は repo ごとに違う (main / dev / ...) ので origin/HEAD から引く
+	// the default branch differs per repo (main / dev / ...), so read it from origin/HEAD
 	if base, err := git(path, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil && base != "" {
 		info.Base = strings.TrimPrefix(base, "origin/")
 		if n, err := git(path, "rev-list", "--count", base+"..HEAD"); err == nil {
@@ -155,7 +157,7 @@ func git(path string, args ...string) (string, error) {
 	return strings.TrimRight(out.String(), "\n"), nil
 }
 
-// each は limit 本までの goroutine で fn を回す。
+// each runs fn across at most limit goroutines.
 func each(paths []string, limit int, fn func(string)) {
 	if limit < 1 {
 		limit = 1

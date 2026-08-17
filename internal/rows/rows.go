@@ -1,4 +1,5 @@
-// Package rows は収集結果を表示行に組み替える。plain 出力と TUI で共有する。
+// Package rows reshapes collected data into display rows, shared by the
+// plain output and the TUI.
 package rows
 
 import (
@@ -12,14 +13,14 @@ import (
 	"github.com/gitt510/yagura/internal/render"
 )
 
-// Pending は収集がまだ終わっていない値の placeholder。
+// Pending is the placeholder for a value that has not been collected yet.
 const Pending = "…"
 
-// Unsynced は fetch できず今の remote を知らない値の表示。
-// 古い記録の数字を新しい顔で出すより「わからない」と言う。
+// Unsynced marks a value whose fetch failed, so the current remote is
+// unknown. Better to say "unknown" than to dress up a stale number as fresh.
 const Unsynced = "x"
 
-// PendingInfo は 1 度も収集していない行に出す Info。
+// PendingInfo returns the Info shown for a row that has never been collected.
 func PendingInfo() gitinfo.Info {
 	return gitinfo.Info{
 		Changed:  Pending,
@@ -30,8 +31,8 @@ func PendingInfo() gitinfo.Info {
 	}
 }
 
-// headState は Info の事実だけから HEAD の意味を決める。
-// 基準が引けない repo (remote 無し / 収集前) は何も主張しない。
+// headState decides what HEAD means from the facts in Info alone.
+// A repo with no baseline (no remote / not yet collected) claims nothing.
 func headState(in gitinfo.Info) render.HeadState {
 	switch {
 	case in.Detached:
@@ -45,7 +46,8 @@ func headState(in gitinfo.Info) render.HeadState {
 	}
 }
 
-// Build は repos と同じ順序で drift 行を返す。infos は repos と同じ長さであること。
+// Build returns drift rows in the same order as repos. infos must have the
+// same length as repos.
 func Build(repos []discover.Repo, infos []gitinfo.Info) []render.Row {
 	out := make([]render.Row, len(repos))
 	for i, r := range repos {
@@ -54,9 +56,9 @@ func Build(repos []discover.Repo, infos []gitinfo.Info) []render.Row {
 	return out
 }
 
-// One は 1 repo ぶんの drift 行を組む。
-// fetch に失敗した repo は remote 由来の列を Unsynced にする。
-// CHANGED / HEAD は local の事実なのでそのまま出す。
+// One builds the drift row for a single repo.
+// For a repo whose fetch failed, the remote-derived columns become Unsynced.
+// CHANGED / HEAD are local facts, so they are shown as they are.
 func One(r discover.Repo, in gitinfo.Info) render.Row {
 	return render.Row{
 		Group:     r.Group,
@@ -70,8 +72,9 @@ func One(r discover.Repo, in gitinfo.Info) render.Row {
 	}
 }
 
-// unsync は fetch 失敗時に記録ベースの値を Unsynced へ落とす。
-// Dash は「そもそも比較対象が無い」という構造の事実なので残す。
+// unsync drops a recorded value to Unsynced when the fetch failed.
+// Dash is kept: it is a structural fact, that there is nothing to compare
+// against in the first place.
 func unsync(v string, failed bool) string {
 	if !failed || v == gitinfo.Dash {
 		return v
@@ -79,7 +82,8 @@ func unsync(v string, failed bool) string {
 	return Unsynced
 }
 
-// CWDs は session の cwd を空を除いて返す。git を引く対象の一覧になる。
+// CWDs returns the sessions' cwds, dropping empty ones. This is the list of
+// paths to look up in git.
 func CWDs(ps []procs.Proc) []string {
 	out := make([]string, 0, len(ps))
 	for _, p := range ps {
@@ -90,9 +94,9 @@ func CWDs(ps []procs.Proc) []string {
 	return out
 }
 
-// Sessions は session を表示行に落とし、cwd 順に並べる。
-// git は cwd (実 path) → 収集済み Info。repo でない cwd は載っていなくてよい。
-// home 配下の path は ~ に縮めて出す。
+// Sessions turns sessions into display rows, ordered by cwd.
+// git maps cwd (the real path) to collected Info; a cwd that is not a repo
+// need not appear. Paths under home are shortened to ~.
 func Sessions(ps []procs.Proc, home string, git map[string]gitinfo.Info) []render.SessionRow {
 	out := make([]render.SessionRow, len(ps))
 	for i, p := range ps {
@@ -115,8 +119,8 @@ func Sessions(ps []procs.Proc, home string, git map[string]gitinfo.Info) []rende
 		}
 		out[i] = row
 	}
-	// group (command) → cwd → pid。CPU 順にしないのは、monitor の行が
-	// refresh のたびに跳ねると追えなくなるため
+	// group (command) → cwd → pid. Not sorted by CPU because rows that jump
+	// around on every refresh are impossible to follow in a monitor
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Cmd != out[j].Cmd {
 			return out[i].Cmd < out[j].Cmd
@@ -129,8 +133,8 @@ func Sessions(ps []procs.Proc, home string, git map[string]gitinfo.Info) []rende
 	return out
 }
 
-// elapsedLabel は ps の etime ([[dd-]hh:]mm:ss) を上位 2 単位に縮める。
-// 読めない形式は - にする。
+// elapsedLabel shortens ps etime ([[dd-]hh:]mm:ss) to its top two units.
+// An unparsable format becomes -.
 func elapsedLabel(etime string) string {
 	days := 0
 	rest := etime
@@ -174,7 +178,7 @@ func elapsedLabel(etime string) string {
 	}
 }
 
-// cpuLabel は ps の %cpu を整数 % に丸める。
+// cpuLabel rounds ps %cpu to an integer percentage.
 func cpuLabel(cpu string) string {
 	v, err := strconv.ParseFloat(cpu, 64)
 	if err != nil {
@@ -183,7 +187,8 @@ func cpuLabel(cpu string) string {
 	return strconv.Itoa(int(v+0.5)) + "%"
 }
 
-// cpuPct は %cpu を meter / 状態判定用の整数に丸める。読めなければ 0。
+// cpuPct rounds %cpu to an integer for the meter and state checks. 0 if
+// unparsable.
 func cpuPct(cpu string) int {
 	v, err := strconv.ParseFloat(cpu, 64)
 	if err != nil {
@@ -192,7 +197,7 @@ func cpuPct(cpu string) int {
 	return int(v + 0.5)
 }
 
-// memLabel は rss (KB) を読みやすい単位に落とす。
+// memLabel reduces rss (KB) to a readable unit.
 func memLabel(kb int) string {
 	switch {
 	case kb <= 0:
@@ -213,8 +218,9 @@ func orDash(s string) string {
 	return s
 }
 
-// fishPath は fish の prompt と同じ流儀で、最後の要素以外を頭文字に縮める。
-// 隠し directory は . を含めて 2 文字残す。~ と先頭の / はそのまま。
+// fishPath shortens every element but the last to its initial, the way the
+// fish prompt does. A hidden directory keeps 2 characters including the .
+// ~ and a leading / are left alone.
 func fishPath(path string) string {
 	parts := strings.Split(path, "/")
 	for i, p := range parts[:max(0, len(parts)-1)] {

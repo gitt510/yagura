@@ -1,7 +1,7 @@
-// Package procs は稼働中の agent CLI (claude など) の process を集める。
-// 対象の process 名は呼び元が宣言する。ps で列挙し、lsof で cwd を、
-// tmux の pane pid と親子関係の突き合わせで session を引く。
-// どれも root 権限は要らない。
+// Package procs collects the processes of running agent CLIs (claude and
+// friends). The caller declares which process names to watch. It lists them
+// with ps, reads cwd with lsof, and resolves the session by matching tmux
+// pane pids against the parent chain. None of it needs root.
 package procs
 
 import (
@@ -12,19 +12,20 @@ import (
 	"strings"
 )
 
-// Proc は 1 process ぶんの収集結果。取れなかった値は空 (数値は 0) で持つ。
+// Proc is what was collected for a single process. Values that could not be
+// read are held empty (0 for numbers).
 type Proc struct {
 	PID     int
-	Comm    string // comm の basename。names のどれに当たったか
+	Comm    string // basename of comm; which of names it matched
 	CWD     string
-	Tmux    string // session:window.pane。pane 配下でなければ空
-	Elapsed string // ps の etime ([[dd-]hh:]mm:ss)
-	CPU     string // ps の %cpu
+	Tmux    string // session:window.pane; empty if not under a pane
+	Elapsed string // etime from ps ([[dd-]hh:]mm:ss)
+	CPU     string // %cpu from ps
 	RSSKB   int    // resident set size (KB)
 }
 
-// List は names で宣言された稼働中の process を返す。1 つも無ければ空。
-// names は comm の basename に完全一致させる。
+// List returns the running processes declared in names, or nothing if none
+// are running. names are matched exactly against the basename of comm.
 func List(names []string) []Proc {
 	watch := make(map[string]bool, len(names))
 	for _, n := range names {
@@ -40,11 +41,11 @@ func List(names []string) []Proc {
 		return nil
 	}
 
-	// lsof は消えた pid が混ざると非 0 で返るが、残りは出力される
+	// lsof exits non-zero if a pid has since died, but still prints the rest
 	lsofOut, _ := run("lsof", "-a", "-p", joinPIDs(procs), "-d", "cwd", "-F", "pn")
 	cwds := parseLsof(lsofOut)
 
-	// tmux が無い / server が居ない場合は全行 pane なし扱いになるだけ
+	// Without tmux, or with no server running, every row simply has no pane
 	tmuxOut, _ := run("tmux", "list-panes", "-a", "-F", "#{pane_pid} #{session_name}:#{window_index}.#{pane_index}")
 	panes := parsePanes(tmuxOut)
 
@@ -55,8 +56,9 @@ func List(names []string) []Proc {
 	return procs
 }
 
-// parsePS は ps の出力から監視対象の行と、全 process の親子表を取る。
-// 親子表は対象以外も含む。pane の shell まで辿るのに使うため。
+// parsePS takes the watched rows out of the ps output along with a parent
+// table for every process. The table covers processes that are not watched
+// too, since it is used to walk up to the pane's shell.
 func parsePS(out string, watch map[string]bool) (procs []Proc, parent map[int]int) {
 	parent = map[int]int{}
 	for line := range strings.Lines(out) {
@@ -70,7 +72,7 @@ func parsePS(out string, watch map[string]bool) (procs []Proc, parent map[int]in
 			continue
 		}
 		parent[pid] = ppid
-		// comm は環境によって full path のこともあり、space も入り得る
+		// comm may be a full path depending on the environment, and may hold spaces
 		comm := strings.Join(f[5:], " ")
 		base := filepath.Base(comm)
 		if !watch[base] {
@@ -82,8 +84,8 @@ func parsePS(out string, watch map[string]bool) (procs []Proc, parent map[int]in
 	return procs, parent
 }
 
-// parseLsof は `lsof -F pn` の出力を pid → cwd に落とす。
-// p 行が pid、続く n 行がその cwd。
+// parseLsof reduces `lsof -F pn` output to pid → cwd.
+// A p line is the pid, and the n line that follows is its cwd.
 func parseLsof(out string) map[int]string {
 	cwds := map[int]string{}
 	pid := 0
@@ -99,7 +101,7 @@ func parseLsof(out string) map[int]string {
 	return cwds
 }
 
-// parsePanes は tmux list-panes の出力を pane の shell pid → 表示名に落とす。
+// parsePanes reduces tmux list-panes output to pane shell pid → display name.
 func parsePanes(out string) map[int]string {
 	panes := map[int]string{}
 	for line := range strings.Lines(out) {
@@ -114,8 +116,9 @@ func parsePanes(out string) map[int]string {
 	return panes
 }
 
-// resolvePane は pid から親を辿り、最初に当たった pane の表示名を返す。
-// claude は普通 pane の shell の直下だが、wrapper を挟んでも拾えるように歩く。
+// resolvePane walks up from pid and returns the display name of the first
+// pane it hits. claude usually sits directly under the pane's shell, but the
+// walk keeps it findable behind a wrapper.
 func resolvePane(pid int, parent map[int]int, panes map[int]string) string {
 	for seen := map[int]bool{}; pid > 1 && !seen[pid]; {
 		seen[pid] = true
