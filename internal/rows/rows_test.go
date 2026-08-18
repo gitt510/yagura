@@ -1,0 +1,202 @@
+package rows
+
+import (
+	"testing"
+
+	"github.com/gitt510/yagura/internal/discover"
+	"github.com/gitt510/yagura/internal/gitinfo"
+	"github.com/gitt510/yagura/internal/procs"
+	"github.com/gitt510/yagura/internal/render"
+)
+
+// Contract on fetch failure: only the remote-derived columns turn into x;
+// local facts and the structural - stay as they are.
+func TestOneFetchFailed(t *testing.T) {
+	repo := discover.Repo{Group: "~/g", Base: "r"}
+	info := gitinfo.Info{
+		Changed: "3", Head: "main", Branch: "main", Base: "main",
+		Ahead: "1", Behind: "2", Unmerged: gitinfo.Dash,
+	}
+
+	got := One(repo, info)
+	if got.Ahead != "1" || got.Behind != "2" || got.Unmerged != gitinfo.Dash {
+		t.Errorf("fetch 成功時に値が変わった: %+v", got)
+	}
+
+	info.FetchFailed = true
+	got = One(repo, info)
+	if got.Ahead != Unsynced || got.Behind != Unsynced {
+		t.Errorf("AHEAD/BEHIND = %q, %q, want %q", got.Ahead, got.Behind, Unsynced)
+	}
+	if got.Unmerged != gitinfo.Dash {
+		t.Errorf("UNMERGED = %q, want %q (構造的な dash は残す)", got.Unmerged, gitinfo.Dash)
+	}
+	if got.Changed != "3" || got.Head != "main" {
+		t.Errorf("local の事実が変わった: CHANGED %q, HEAD %q", got.Changed, got.Head)
+	}
+}
+
+// BranchView contract: the default branch always leads the repo block (same
+// slot everywhere) and the rest follow by name; the first row carries the
+// REPO name and is the only focusable one (Sub false), while the checked-out
+// branch is the only row with CHANGED. A repo whose branches have not been
+// collected yet carries a trailing pending row.
+func TestBranchView(t *testing.T) {
+	repos := []discover.Repo{{Group: "~/g", Base: "r"}}
+	infos := []gitinfo.Info{{
+		Changed: "2", Head: "bootstrap", Branch: "bootstrap", Base: "main",
+		Ahead: "0", Behind: "0", Unmerged: "6",
+	}}
+	branches := map[int][]gitinfo.BranchInfo{0: {
+		{Name: "feature", Ahead: "1", Behind: "0", Unmerged: "2"},
+		{Name: "main", Ahead: "0", Behind: "5", Unmerged: "0"},
+	}}
+
+	got := BranchView(repos, infos, branches)
+	if len(got) != 3 {
+		t.Fatalf("len = %d, want 3", len(got))
+	}
+	if got[0].Head != "main" || got[1].Head != "bootstrap" || got[2].Head != "feature" {
+		t.Errorf("order = %q, %q, %q, want default first, then by name", got[0].Head, got[1].Head, got[2].Head)
+	}
+	if got[0].Repo != "r" || got[1].Repo != "" || got[2].Repo != "" {
+		t.Errorf("REPO on the first row only, got %q, %q, %q", got[0].Repo, got[1].Repo, got[2].Repo)
+	}
+	if got[0].Sub || !got[1].Sub || !got[2].Sub {
+		t.Errorf("Sub = %v, %v, %v, want only the named first row focusable", got[0].Sub, got[1].Sub, got[2].Sub)
+	}
+	if got[0].Changed != gitinfo.Dash || got[1].Changed != "2" {
+		t.Errorf("CHANGED belongs to the checked-out branch only: %q, %q", got[0].Changed, got[1].Changed)
+	}
+	if got[0].HeadState != render.HeadDefault || got[1].HeadState != render.HeadBranch {
+		t.Errorf("HeadState = %v, %v, want HeadDefault / HeadBranch", got[0].HeadState, got[1].HeadState)
+	}
+	if got[0].Behind != "5" || got[2].Unmerged != "2" {
+		t.Errorf("drift values lost: %+v, %+v", got[0], got[2])
+	}
+
+	pending := BranchView(repos, infos, nil)
+	if len(pending) != 2 || pending[0].Head != "bootstrap" || pending[1].Head != Pending {
+		t.Errorf("pending = %+v, want the checked-out row plus a … row", pending)
+	}
+	if pending[0].Sub || !pending[1].Sub {
+		t.Errorf("pending Sub = %v, %v, want only the named first row focusable", pending[0].Sub, pending[1].Sub)
+	}
+}
+
+// Sessions contract: home shrinks to ~, values that could not be read become
+// -, and rows are ordered by cwd.
+func TestSessions(t *testing.T) {
+	home := "/Users/t"
+	got := Sessions([]procs.Proc{
+		{PID: 300, CWD: "/Users/t/z-repo", Tmux: "work:1.2"},
+		{PID: 400, CWD: "/Users/t/a-repo"},
+		{PID: 500, Tmux: "work:2.1"},
+		{PID: 600, CWD: "/Users/t"},
+	}, home, nil)
+
+	if len(got) != 4 {
+		t.Fatalf("len = %d, want 4", len(got))
+	}
+	// - < ~ < ~/a-repo < ~/z-repo
+	if got[0].CWD != "-" || got[0].PID != "500" {
+		t.Errorf("got[0] = %+v, want cwd - の行が先頭", got[0])
+	}
+	if got[1].CWD != "~" {
+		t.Errorf("got[1].CWD = %q, want ~ (home そのもの)", got[1].CWD)
+	}
+	if got[2].CWD != "~/a-repo" || got[3].CWD != "~/z-repo" {
+		t.Errorf("cwd 順に並んでいない: %q, %q", got[2].CWD, got[3].CWD)
+	}
+	if got[3].Tmux != "work:1.2" || got[2].Tmux != "-" {
+		t.Errorf("TMUX = %q, %q", got[3].Tmux, got[2].Tmux)
+	}
+}
+
+// git join contract: if the cwd is in git, BRANCH / CHG are filled in;
+// if not, they stay -. The key is the real path, before shortening.
+func TestProcsGit(t *testing.T) {
+	git := map[string]gitinfo.Info{
+		"/Users/t/repo": {Changed: "2", Head: "feature", Branch: "feature", Base: "main"},
+	}
+	// the cwd sort puts ~/not-repo first and ~/repo second
+	got := Sessions([]procs.Proc{
+		{PID: 300, CWD: "/Users/t/repo"},
+		{PID: 400, CWD: "/Users/t/not-repo"},
+	}, "/Users/t", git)
+
+	if got[1].Branch != "feature" || got[1].Changed != "2" {
+		t.Errorf("repo の行 = %+v, want BRANCH feature / CHG 2", got[1])
+	}
+	if got[1].HeadState != render.HeadBranch {
+		t.Errorf("HeadState = %v, want HeadBranch", got[1].HeadState)
+	}
+	if got[0].Branch != gitinfo.Dash || got[0].Changed != gitinfo.Dash {
+		t.Errorf("repo 外の行 = %+v, want - のまま", got[0])
+	}
+}
+
+// CWDs contract: empty cwds are dropped. This is the list of paths to look
+// up in git.
+func TestCWDs(t *testing.T) {
+	got := CWDs([]procs.Proc{{CWD: "/a"}, {CWD: ""}, {CWD: "/a"}})
+	if len(got) != 2 || got[0] != "/a" || got[1] != "/a" {
+		t.Errorf("CWDs = %v, want [/a /a]", got)
+	}
+}
+
+// elapsedLabel contract: shorten the 4 etime formats to their top two units,
+// and use - when unparsable.
+func TestElapsedLabel(t *testing.T) {
+	cases := map[string]string{
+		"00:42":       "42s",
+		"05:42":       "5m",
+		"01:02:03":    "1h2m",
+		"10-01:02:03": "10d1h",
+		"":            "-",
+		"garbage":     "-",
+	}
+	for in, want := range cases {
+		if got := elapsedLabel(in); got != want {
+			t.Errorf("elapsedLabel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestCPUAndMemLabel(t *testing.T) {
+	if got := cpuLabel("12.5"); got != "13%" {
+		t.Errorf("cpuLabel(12.5) = %q, want 13%%", got)
+	}
+	if got := cpuLabel("0.0"); got != "0%" {
+		t.Errorf("cpuLabel(0.0) = %q, want 0%%", got)
+	}
+	if got := cpuLabel("bad"); got != "-" {
+		t.Errorf("cpuLabel(bad) = %q, want -", got)
+	}
+
+	memCases := map[int]string{0: "-", 512: "512K", 40960: "40M", 2097152: "2.0G"}
+	for in, want := range memCases {
+		if got := memLabel(in); got != want {
+			t.Errorf("memLabel(%d) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// fishPath contract: keep only the last element and shorten the rest to
+// initials. Hidden directories keep 2 characters; ~, the root /, and the
+// last element are not shortened.
+func TestFishPath(t *testing.T) {
+	cases := map[string]string{
+		"~/ghq/github.com/gitt510/yagura": "~/g/g/g/yagura",
+		"~/.config/nvim":                  "~/.c/nvim",
+		"/opt/homebrew/bin":               "/o/h/bin",
+		"~/dotfiles":                      "~/dotfiles",
+		"~":                               "~",
+		"-":                               "-",
+	}
+	for in, want := range cases {
+		if got := fishPath(in); got != want {
+			t.Errorf("fishPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
