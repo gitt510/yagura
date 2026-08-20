@@ -3,6 +3,8 @@
 A lookout tower for local work: the drift of every repo under your declared
 roots, and the agent CLI sessions running on the machine right now.
 
+![yagura repos view: a drift table with branch mode toggled by tab](docs/demo.gif)
+
 ## Views
 
 - The TUI opens on the repos view; `p` switches between repos and sessions
@@ -73,6 +75,7 @@ yagura gh- --plain -n    # one-shot repos table, filtered, without fetch
 ## Development
 
 - `just test` runs the test suite; `just check` runs gofmt, go vet, and golangci-lint
+- `just screenshot` rebuilds `docs/demo.gif` from a synthetic fixture (`docs/fixture.sh`), so the demo shows no real paths; it requires `vhs`
 - `mise` pins the toolchain (go, golangci-lint)
 - Colors are written as ANSI-16 slot numbers only; a guard test rejects 256-color, truecolor, and hex
 - User-facing string literals are English-only, enforced by golangci-lint (gosmopolitan)
