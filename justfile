@@ -18,3 +18,7 @@ check:
 # Build and install the binary into GOBIN
 install:
     go install .
+
+# Rebuild docs/demo.gif from a synthetic fixture (requires vhs)
+screenshot:
+    vhs docs/demo.tape
