@@ -21,6 +21,20 @@ const (
 	HeadDetached                  // not on a branch at all
 )
 
+// String is the name the JSON output uses for the state.
+func (s HeadState) String() string {
+	switch s {
+	case HeadDefault:
+		return "default"
+	case HeadBranch:
+		return "branch"
+	case HeadDetached:
+		return "detached"
+	default:
+		return "unknown"
+	}
+}
+
 // Row is the drift display values for a single repo, all preformatted strings.
 type Row struct {
 	Group string
