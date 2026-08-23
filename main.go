@@ -22,13 +22,14 @@ import (
 // concurrency is how many repos are fetched / inspected at once.
 const concurrency = 12
 
-const usage = `usage: yagura [query] [--root <dir>]... [--sessions] [-n|--no-fetch] [--plain] [--interval <dur>]
+const usage = `usage: yagura [query] [--root <dir>]... [--sessions] [-n|--no-fetch] [--plain|--json] [--interval <dur>]
 
   query           filter repos by substring match on path (repos view only)
       --root      root to watch; repeatable; overrides the config file
       --sessions  start on the sessions view instead of repos
   -n, --no-fetch  skip fetch and report from recorded remote-tracking refs
       --plain     print the table once without the TUI (auto on non-TTY)
+      --json      print the same facts once as JSON, counts as numbers
       --interval  refresh interval of the repos view for this run (overrides config)
 `
 
@@ -66,7 +67,10 @@ func run() int {
 	}
 
 	// the sessions view is not tied to the repo declaration (no root or query)
-	if opts.withSessions && (opts.plain || !isTTY()) {
+	if opts.withSessions && (opts.json || opts.plain || !isTTY()) {
+		if opts.json {
+			return jsonSessions(cfg.Sessions.Commands)
+		}
 		return plainSessions(cfg.Sessions.Commands)
 	}
 
@@ -86,6 +90,11 @@ func run() int {
 
 		// nothing to show at the default entry (repos view): guide and exit, no TUI
 		if !opts.withSessions {
+			// with roots declared, an empty set is an answer, not a failure:
+			// --json says so in the document rather than in an exit code
+			if opts.json && len(roots) > 0 {
+				return jsonRepos(nil, append(warnings, reposNote), opts)
+			}
 			for _, w := range warnings {
 				fmt.Fprintln(os.Stderr, w)
 			}
@@ -98,6 +107,9 @@ func run() int {
 		}
 	}
 
+	if opts.json {
+		return jsonRepos(repos, warnings, opts)
+	}
 	if opts.plain || !isTTY() {
 		return plain(repos, warnings, opts)
 	}
@@ -135,37 +147,68 @@ func plainSessions(commands []string) int {
 	return 0
 }
 
+func jsonSessions(commands []string) int {
+	ps := procs.List(commands)
+	git := gitinfo.ForDirs(rows.CWDs(ps), concurrency)
+
+	if err := render.SessionsJSON(os.Stdout, rows.SessionRecords(ps, git), nil); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return 0
+}
+
+// collect fetches (unless skipped) and inspects every repo, marking the ones
+// whose fetch failed. It returns the infos in repos order, and the names of
+// the repos that failed to fetch.
+func collect(repos []discover.Repo, noFetch bool) ([]gitinfo.Info, []string) {
+	paths := make([]string, len(repos))
+	idx := make(map[string]int, len(repos))
+	for i, r := range repos {
+		paths[i] = r.Path
+		idx[r.Path] = i
+	}
+
+	var failedPaths []string
+	if !noFetch {
+		failedPaths = gitinfo.Fetch(paths, concurrency)
+	}
+
+	infos := gitinfo.CollectAll(paths, concurrency)
+	var failed []string
+	for _, p := range failedPaths {
+		infos[idx[p]].FetchFailed = true
+		failed = append(failed, repos[idx[p]].Base)
+	}
+	return infos, failed
+}
+
+// jsonRepos prints the drift as one JSON document. A failed fetch is not an
+// exit code here: every repo carries its own fetch_failed with null counts,
+// so the answer and its gaps arrive together and the reader still parses one
+// document.
+func jsonRepos(repos []discover.Repo, warnings []string, opts options) int {
+	infos, failed := collect(repos, opts.noFetch)
+
+	if opts.noFetch {
+		warnings = append(warnings, "no fetch: ahead/behind reflect recorded remote-tracking refs")
+	} else if len(failed) > 0 {
+		warnings = append(warnings, "fetch failed: "+strings.Join(failed, ", "))
+	}
+
+	if err := render.ReposJSON(os.Stdout, rows.Records(repos, infos), warnings); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return 0
+}
+
 func plain(repos []discover.Repo, warnings []string, opts options) int {
 	for _, w := range warnings {
 		fmt.Fprintln(os.Stderr, w)
 	}
 
-	paths := make([]string, len(repos))
-	for i, r := range repos {
-		paths[i] = r.Path
-	}
-
-	var failed []string
-	var failedPaths []string
-	if !opts.noFetch {
-		byPath := map[string]string{}
-		for _, r := range repos {
-			byPath[r.Path] = r.Name
-		}
-		failedPaths = gitinfo.Fetch(paths, concurrency)
-		for _, p := range failedPaths {
-			failed = append(failed, byPath[p])
-		}
-	}
-
-	infos := gitinfo.CollectAll(paths, concurrency)
-	idx := map[string]int{}
-	for i, p := range paths {
-		idx[p] = i
-	}
-	for _, p := range failedPaths {
-		infos[idx[p]].FetchFailed = true
-	}
+	infos, failed := collect(repos, opts.noFetch)
 
 	useColor := isTTY() && !noColor()
 	render.Table(os.Stdout, rows.Build(repos, infos), useColor)
@@ -185,6 +228,7 @@ type options struct {
 	noFetch      bool
 	withSessions bool
 	plain        bool
+	json         bool
 	interval     time.Duration
 }
 
@@ -213,6 +257,8 @@ func parseArgs(args []string) (options, error) {
 			opts.withSessions = true
 		case a == "--plain":
 			opts.plain = true
+		case a == "--json":
+			opts.json = true
 		case a == "--root" || strings.HasPrefix(a, "--root="):
 			v, err := value(&i, "--root")
 			if err != nil {

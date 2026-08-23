@@ -31,6 +31,38 @@ roots, and the agent CLI sessions running on the machine right now.
 - `TMUX` shows the pane (`session:window.pane`) the process runs in; `-` outside tmux
 - `CPU` shows an instantaneous meter and percentage from `ps`
 
+## JSON output
+
+- `--json` prints the selected view once as a single JSON document, in place of the table
+- Counts are numbers; a count with nothing to compare against — no upstream, or a fetch that failed — is `null`, never `0`
+- `fetch_failed` tells the two apart: `true` means the remote is unknown, not absent
+- Each repo carries its absolute `path`, so a reader can act on it directly
+- A failed fetch is reported in the document (`fetch_failed`, `warnings`), not as a non-zero exit
+- Lists are always lists: no repos means `"repos": []`
+
+```json
+{
+  "repos": [
+    {
+      "root": "~/ghq/github.com/gitt510",
+      "name": "moat",
+      "path": "/Users/tg/ghq/github.com/gitt510/moat",
+      "head": "main",
+      "head_state": "default",
+      "changed": 0,
+      "ahead": 1,
+      "behind": 0,
+      "unmerged": 1,
+      "fetch_failed": false
+    }
+  ],
+  "warnings": []
+}
+```
+
+- `head_state` is one of `default`, `branch`, `detached`, `unknown` (no `origin/HEAD` to compare against)
+- `--sessions --json` yields `{"sessions": [...], "warnings": []}`, one record per session, with `branch` / `changed` `null` outside a work tree
+
 ## Requirements
 
 - `git`, `ps`, and `lsof` in `PATH`
@@ -47,6 +79,12 @@ roots, and the agent CLI sessions running on the machine right now.
 yagura                   # TUI, repos view
 yagura --sessions        # TUI, sessions view
 yagura gh- --plain -n    # one-shot repos table, filtered, without fetch
+yagura --json            # one-shot repos document, for a script or an agent
+```
+
+```sh
+# every repo with local work or drift
+yagura --json | jq '.repos[] | select(.changed > 0 or .behind > 0 or .unmerged > 0)'
 ```
 
 ## Configuration
@@ -70,6 +108,7 @@ yagura gh- --plain -n    # one-shot repos table, filtered, without fetch
 | `--sessions` | start on the sessions view |
 | `-n`, `--no-fetch` | skip fetch; remote-derived columns reflect recorded remote-tracking refs |
 | `--plain` | print the table once without the TUI |
+| `--json` | print the same facts once as JSON; wins over `--plain` |
 | `--interval <dur>` | override `repos.interval` for this run |
 
 ## Development
