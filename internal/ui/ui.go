@@ -624,7 +624,13 @@ func (m *model) clampView() {
 	p := m.pane()
 	h := m.bodyHeight()
 	if p.cursor < p.offset {
-		p.offset = p.cursor
+		// Scroll to the chrome (heading, rule) above the cursor line, not the
+		// line itself, so the table's top border and headings stay in view
+		top := p.cursor
+		for top > 0 && p.tbl.lines[top-1].kind != lineRepo {
+			top--
+		}
+		p.offset = top
 	}
 	if p.cursor >= p.offset+h {
 		p.offset = p.cursor - h + 1
