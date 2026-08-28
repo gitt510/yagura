@@ -134,6 +134,11 @@ func buildTable(rs []render.Row, th theme) table {
 			t.push(group, t.top())
 			t.push(group, t.headerRow(headersOf(cols), rightsOf(cols)))
 			t.push(group, t.rule())
+		} else if r.Sub {
+			// A rule between a repo's branches that leaves the REPO column open
+			t.push(group, t.subRule())
+		} else {
+			t.push(group, t.rule())
 		}
 
 		cells := make([]cell, len(cols))
@@ -178,6 +183,15 @@ func (t table) top() string {
 
 func (t table) rule() string {
 	return t.th.border.Render(teeL + strings.Join(t.dashes(), cross) + teeR)
+}
+
+// subRule separates a repo's branches without cutting the REPO column, so the
+// repo cell reads as one block spanning its branches.
+func (t table) subRule() string {
+	b := t.th.border
+	segs := t.dashes()
+	segs[0] = strings.Repeat(" ", t.widths[0]+2)
+	return b.Render(barV + segs[0] + teeL + strings.Join(segs[1:], cross) + teeR)
 }
 
 func (t table) bottom() string {
