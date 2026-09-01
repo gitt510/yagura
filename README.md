@@ -110,6 +110,7 @@ yagura --json | jq '.repos[] | select(.changed > 0 or .behind > 0 or .unmerged >
 | `--plain` | print the table once without the TUI |
 | `--json` | print the same facts once as JSON; wins over `--plain` |
 | `--interval <dur>` | override `repos.interval` for this run |
+| `-h`, `--help` | print the usage to stdout and exit 0 |
 
 ## Development
 
