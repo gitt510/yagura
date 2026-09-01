@@ -31,6 +31,7 @@ const usage = `usage: yagura [query] [--root <dir>]... [--sessions] [-n|--no-fet
       --plain     print the table once without the TUI (auto on non-TTY)
       --json      print the same facts once as JSON, counts as numbers
       --interval  refresh interval of the repos view for this run (overrides config)
+  -h, --help      print this usage and exit
 `
 
 func setupMessage() string {
@@ -53,6 +54,12 @@ func run() int {
 		fmt.Fprintln(os.Stderr, err)
 		fmt.Fprint(os.Stderr, usage)
 		return 2
+	}
+
+	// asking for the usage is a success: it goes to stdout, so it pipes
+	if opts.help {
+		fmt.Print(usage)
+		return 0
 	}
 
 	cfg, err := config.Load()
@@ -223,6 +230,7 @@ func plain(repos []discover.Repo, warnings []string, opts options) int {
 }
 
 type options struct {
+	help         bool
 	query        string
 	roots        []string
 	noFetch      bool
@@ -253,6 +261,8 @@ func parseArgs(args []string) (options, error) {
 		switch {
 		case a == "-n" || a == "--no-fetch":
 			opts.noFetch = true
+		case a == "-h" || a == "--help":
+			opts.help = true
 		case a == "--sessions":
 			opts.withSessions = true
 		case a == "--plain":
