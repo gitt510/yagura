@@ -37,7 +37,7 @@ type Options struct {
 
 // Run starts the TUI and blocks until it exits.
 func Run(opts Options) error {
-	p := tea.NewProgram(newModel(opts), tea.WithAltScreen())
+	p := tea.NewProgram(newModel(opts), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
 }
@@ -276,6 +276,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+
+	case tea.MouseMsg:
+		if m.showHelp {
+			return m, nil
+		}
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.move(-1)
+		case tea.MouseButtonWheelDown:
+			m.move(1)
+		}
+		return m, nil
 
 	case tickMsg:
 		// Drop ticks from an old timer generation and ticks that fire mid-refresh
@@ -679,6 +691,7 @@ func (m *model) View() string {
 // points here.
 var helpRows = []struct{ key, desc string }{
 	{"j / k", "move"},
+	{"wheel", "move"},
 	{"g / G", "top / bottom"},
 	{"ctrl+d / u", "half page"},
 	{"tab", "toggle branches (repos)"},
