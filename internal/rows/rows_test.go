@@ -15,72 +15,88 @@ func TestOneFetchFailed(t *testing.T) {
 	repo := discover.Repo{Group: "~/g", Base: "r"}
 	info := gitinfo.Info{
 		Changed: "3", Head: "main", Branch: "main", Base: "main",
-		Ahead: "1", Behind: "2", Unmerged: gitinfo.Dash,
+		MainAhead: "1", MainBehind: "2", WIP: "1", LocalOnly: "3", Gone: "2", RemoteOnly: "0",
 	}
 
 	got := One(repo, info)
-	if got.Ahead != "1" || got.Behind != "2" || got.Unmerged != gitinfo.Dash {
-		t.Errorf("fetch 成功時に値が変わった: %+v", got)
+	if got.Main != "↑1 ↓2" || got.WIP != "1" || got.LocalOnly != "3 · 2 gone" || got.RemoteOnly != "0" {
+		t.Errorf("values changed on a successful fetch: %+v", got)
 	}
 
 	info.FetchFailed = true
 	got = One(repo, info)
-	if got.Ahead != Unsynced || got.Behind != Unsynced {
-		t.Errorf("AHEAD/BEHIND = %q, %q, want %q", got.Ahead, got.Behind, Unsynced)
-	}
-	if got.Unmerged != gitinfo.Dash {
-		t.Errorf("UNMERGED = %q, want %q (構造的な dash は残す)", got.Unmerged, gitinfo.Dash)
+	if got.Main != Unsynced || got.WIP != Unsynced || got.LocalOnly != Unsynced || got.RemoteOnly != Unsynced {
+		t.Errorf("remote-derived = %q, %q, %q, %q, want %q", got.Main, got.WIP, got.LocalOnly, got.RemoteOnly, Unsynced)
 	}
 	if got.Changed != "3" || got.Head != "main" {
-		t.Errorf("local の事実が変わった: CHANGED %q, HEAD %q", got.Changed, got.Head)
+		t.Errorf("local facts changed: CHANGED %q, HEAD %q", got.Changed, got.Head)
+	}
+
+	info.FetchFailed = false
+	info.MainAhead, info.MainBehind = gitinfo.Dash, gitinfo.Dash
+	if got := One(repo, info); got.Main != gitinfo.Dash {
+		t.Errorf("MAIN without a default branch = %q, want %q", got.Main, gitinfo.Dash)
 	}
 }
 
-// BranchView contract: the default branch always leads the repo block (same
-// slot everywhere) and the rest follow by name; the first row carries the
-// REPO name and is the only focusable one (Sub false), while the checked-out
-// branch is the only row with CHANGED. A repo whose branches have not been
-// collected yet carries a trailing pending row.
-func TestBranchView(t *testing.T) {
-	repos := []discover.Repo{{Group: "~/g", Base: "r"}}
-	infos := []gitinfo.Info{{
-		Changed: "2", Head: "bootstrap", Branch: "bootstrap", Base: "main",
-		Ahead: "0", Behind: "0", Unmerged: "6",
-	}}
-	branches := map[int][]gitinfo.BranchInfo{0: {
-		{Name: "feature", Ahead: "1", Behind: "0", Unmerged: "2"},
-		{Name: "main", Ahead: "0", Behind: "5", Unmerged: "0"},
+// Clean means nothing at all to act on: on the default branch, no changes,
+// the default branch in sync, and no other branch anywhere.
+func TestOneClean(t *testing.T) {
+	repo := discover.Repo{Group: "~/g", Base: "r"}
+	info := gitinfo.Info{
+		Changed: "0", Head: "main", Branch: "main", Base: "main",
+		MainAhead: "0", MainBehind: "0", WIP: "0", LocalOnly: "0", Gone: "0", RemoteOnly: "0",
+	}
+	if !One(repo, info).Clean {
+		t.Errorf("clean repo not marked clean: %+v", One(repo, info))
+	}
+	for name, change := range map[string]func(*gitinfo.Info){
+		"changed":     func(in *gitinfo.Info) { in.Changed = "1" },
+		"behind":      func(in *gitinfo.Info) { in.MainBehind = "1" },
+		"wip":         func(in *gitinfo.Info) { in.WIP = "1" },
+		"local-only":  func(in *gitinfo.Info) { in.LocalOnly = "1" },
+		"remote-only": func(in *gitinfo.Info) { in.RemoteOnly = "1" },
+		"off main":    func(in *gitinfo.Info) { in.Branch, in.Head = "feat", "feat" },
+		"pending":     func(in *gitinfo.Info) { *in = PendingInfo() },
+	} {
+		in := info
+		change(&in)
+		if One(repo, in).Clean {
+			t.Errorf("%s: marked clean", name)
+		}
+	}
+}
+
+// Branches keeps the collected order, marks the checked-out branch, spells
+// gone out in WHERE, and withholds push / pull after a failed fetch.
+func TestBranches(t *testing.T) {
+	info := gitinfo.Info{Branches: []gitinfo.BranchInfo{
+		{Name: "main", Where: gitinfo.WhereDefault, Current: true, Push: "0", Pull: "1", LastCommit: "2026-10-08"},
+		{Name: "feat", Where: gitinfo.WhereLocalOnly, Gone: true, Push: gitinfo.Dash, Pull: gitinfo.Dash, LastCommit: "2026-10-01"},
+		{Name: "drafts", Where: gitinfo.WhereRemoteOnly, Push: gitinfo.Dash, Pull: gitinfo.Dash},
 	}}
 
-	got := BranchView(repos, infos, branches)
+	got := Branches(info)
 	if len(got) != 3 {
 		t.Fatalf("len = %d, want 3", len(got))
 	}
-	if got[0].Head != "main" || got[1].Head != "bootstrap" || got[2].Head != "feature" {
-		t.Errorf("order = %q, %q, %q, want default first, then by name", got[0].Head, got[1].Head, got[2].Head)
+	if got[0].Name != "* main" || got[1].Name != "  feat" {
+		t.Errorf("names = %q, %q, want the checked-out branch marked", got[0].Name, got[1].Name)
 	}
-	if got[0].Repo != "r" || got[1].Repo != "" || got[2].Repo != "" {
-		t.Errorf("REPO on the first row only, got %q, %q, %q", got[0].Repo, got[1].Repo, got[2].Repo)
+	if got[1].Where != "local-only · gone" || got[1].Kind != "local-only" {
+		t.Errorf("gone branch = %+v", got[1])
 	}
-	if got[0].Sub || !got[1].Sub || !got[2].Sub {
-		t.Errorf("Sub = %v, %v, %v, want only the named first row focusable", got[0].Sub, got[1].Sub, got[2].Sub)
+	if got[2].Where != "remote-only" || got[2].LastCommit != gitinfo.Dash {
+		t.Errorf("remote-only branch = %+v", got[2])
 	}
-	if got[0].Changed != gitinfo.Dash || got[1].Changed != "2" {
-		t.Errorf("CHANGED belongs to the checked-out branch only: %q, %q", got[0].Changed, got[1].Changed)
-	}
-	if got[0].HeadState != render.HeadDefault || got[1].HeadState != render.HeadBranch {
-		t.Errorf("HeadState = %v, %v, want HeadDefault / HeadBranch", got[0].HeadState, got[1].HeadState)
-	}
-	if got[0].Behind != "5" || got[2].Unmerged != "2" {
-		t.Errorf("drift values lost: %+v, %+v", got[0], got[2])
+	if got[0].Pull != "1" {
+		t.Errorf("pull = %q, want 1", got[0].Pull)
 	}
 
-	pending := BranchView(repos, infos, nil)
-	if len(pending) != 2 || pending[0].Head != "bootstrap" || pending[1].Head != Pending {
-		t.Errorf("pending = %+v, want the checked-out row plus a … row", pending)
-	}
-	if pending[0].Sub || !pending[1].Sub {
-		t.Errorf("pending Sub = %v, %v, want only the named first row focusable", pending[0].Sub, pending[1].Sub)
+	info.FetchFailed = true
+	got = Branches(info)
+	if got[0].Push != Unsynced || got[0].Pull != Unsynced || got[1].Push != gitinfo.Dash {
+		t.Errorf("after a failed fetch = %+v, %+v", got[0], got[1])
 	}
 }
 

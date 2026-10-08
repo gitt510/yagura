@@ -4,6 +4,7 @@ package ui
 
 import (
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 // Options is the startup configuration.
 type Options struct {
 	Repos        []discover.Repo
-	TmuxSession  string   // tmux session that enter opens repos into, from config repos.tmux-session
+	TmuxSession  string   // tmux session that o opens repos into, from config repos.tmux-session
 	Commands     []string // Process names to watch, from config sessions.commands
 	Roots        int      // Number of declared roots, shown in the bar
 	Warnings     []string // discover warnings, kept in the repos view footer
@@ -65,13 +66,6 @@ type repoResultMsg struct {
 	fetchErr bool
 }
 
-// branchesResultMsg carries one repo's other local branches. It has no
-// generation: the newest list simply replaces the previous one.
-type branchesResultMsg struct {
-	index int
-	list  []gitinfo.BranchInfo
-}
-
 // tickMsg signals an auto-refresh. gen is the armTimer generation, so a
 // leftover timer that fires after a view switch changed the interval can be
 // discarded.
@@ -92,19 +86,15 @@ type model struct {
 	view     view
 	sessions pane
 	repos    pane
+	// branches is the branch list of the repo opened with enter; open is that
+	// repo's index, -1 while the repos table is shown
+	branches pane
+	open     int
 
 	infos    []gitinfo.Info
 	procList []render.SessionRow
 
-	// branchMode is the repos view's second display mode: one row per local
-	// branch instead of one per repo. branches doubles as the loaded marker:
-	// a key that is present but empty means "collected, none". reposRefs maps
-	// each repos-table data row back to its repo index
-	branchMode bool
-	branches   map[int][]gitinfo.BranchInfo
-	reposRefs  []int
-
-	// The last enter (open in tmux) outcome, shown in the footer until the
+	// The last o (open in tmux) outcome, shown in the footer until the
 	// next refresh
 	openMsg string
 	openErr bool
@@ -139,11 +129,11 @@ func newModel(opts Options) *model {
 	sp.Spinner = spinner.Dot
 
 	m := &model{
-		opts:     opts,
-		th:       newTheme(opts.Color),
-		infos:    infos,
-		branches: map[int][]gitinfo.BranchInfo{},
-		spinner:  sp,
+		opts:    opts,
+		th:      newTheme(opts.Color),
+		infos:   infos,
+		open:    -1,
+		spinner: sp,
 	}
 	if opts.WithSessions {
 		m.view = viewSessions
@@ -193,16 +183,10 @@ func (m *model) startRefresh() tea.Cmd {
 	m.pending = len(m.opts.Repos)
 	m.failed = nil
 
-	cmds := make([]tea.Cmd, 0, 2*len(m.opts.Repos)+1)
+	cmds := make([]tea.Cmd, 0, len(m.opts.Repos)+1)
 	cmds = append(cmds, m.spinner.Tick)
 	for i, r := range m.opts.Repos {
 		cmds = append(cmds, collectCmd(m.gens[v], i, r.Path, m.opts.NoFetch))
-	}
-	// Branch rows ride the same refresh, so they never go stale on screen
-	if m.branchMode {
-		for i, r := range m.opts.Repos {
-			cmds = append(cmds, branchesCmd(i, r.Path))
-		}
 	}
 	return tea.Batch(cmds...)
 }
@@ -257,16 +241,6 @@ func openResult(name, session string, out []byte, err error) openResultMsg {
 	return msg
 }
 
-// branchesCmd collects one repo's other local branches. Fast enough to run on
-// demand: it reads refs only and never fetches.
-func branchesCmd(index int, path string) tea.Cmd {
-	return func() tea.Msg {
-		sem <- struct{}{}
-		defer func() { <-sem }()
-		return branchesResultMsg{index: index, list: gitinfo.Branches(path)}
-	}
-}
-
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -312,11 +286,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case branchesResultMsg:
-		m.branches[msg.index] = msg.list
-		m.rebuild()
-		return m, nil
-
 	case openResultMsg:
 		m.openMsg, m.openErr = "opened "+msg.repo+" in tmux session "+msg.session, false
 		if msg.err != "" {
@@ -358,7 +327,20 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "q", "ctrl+c", "esc":
+	case "esc", "h", "backspace":
+		// Inside a repo's branch list these step back to the repos table; on
+		// the top screen esc keeps quitting
+		if m.inBranches() {
+			m.open = -1
+			m.rebuild()
+			return m, nil
+		}
+		if msg.String() == "esc" {
+			return m, tea.Quit
+		}
+		return m, nil
+
+	case "q", "ctrl+c":
 		return m, tea.Quit
 
 	case "?":
@@ -368,10 +350,11 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		return m, m.startRefresh()
 
-	case "tab":
-		return m, m.toggleBranchMode()
+	case "enter", "l":
+		m.openBranches()
+		return m, nil
 
-	case "enter":
+	case "o":
 		return m, m.openRepo()
 
 	case "p":
@@ -405,13 +388,33 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// openRepo opens the focused repo in the declared tmux session: the path from
-// the lookout to the work site.
+// inBranches reports whether a repo's branch list is on screen.
+func (m *model) inBranches() bool { return m.view == viewRepos && m.open >= 0 }
+
+// openBranches opens the focused repo's branch list.
+func (m *model) openBranches() {
+	if m.view != viewRepos || m.inBranches() {
+		return
+	}
+	idx, ok := m.focusedRepo()
+	if !ok {
+		return
+	}
+	m.open = idx
+	m.branches = pane{}
+	m.rebuild()
+}
+
+// openRepo opens the focused repo (or the one whose branches are shown) in the
+// declared tmux session: the path from the lookout to the work site.
 func (m *model) openRepo() tea.Cmd {
 	if m.view != viewRepos {
 		return nil
 	}
 	idx, ok := m.focusedRepo()
+	if m.inBranches() {
+		idx, ok = m.open, true
+	}
 	if !ok {
 		return nil
 	}
@@ -423,39 +426,18 @@ func (m *model) openRepo() tea.Cmd {
 	return openCmd(m.opts.TmuxSession, r.Path, r.Base)
 }
 
-// focusedRepo resolves the cursor to the repo it sits on. Focusable rows are
-// 1:1 with repos in both display modes.
+// focusedRepo resolves the cursor to the repo it sits on. Data rows are 1:1
+// with repos, in declaration order.
 func (m *model) focusedRepo() (int, bool) {
 	p := &m.repos
 	if p.cursor < 0 || p.cursor >= len(p.tbl.lines) {
 		return 0, false
 	}
 	l := p.tbl.lines[p.cursor]
-	if l.kind != lineRepo || l.ref < 0 || l.ref >= len(m.reposRefs) {
+	if l.kind != lineRepo || l.ref < 0 || l.ref >= len(m.opts.Repos) {
 		return 0, false
 	}
-	return m.reposRefs[l.ref], true
-}
-
-// toggleBranchMode switches the repos view between one row per repo and one
-// row per branch. The first switch collects the branches; after that the rows
-// reuse what the refresh keeps up to date.
-func (m *model) toggleBranchMode() tea.Cmd {
-	if m.view != viewRepos {
-		return nil
-	}
-	m.branchMode = !m.branchMode
-	m.rebuild()
-	if !m.branchMode {
-		return nil
-	}
-	var cmds []tea.Cmd
-	for i, r := range m.opts.Repos {
-		if _, loaded := m.branches[i]; !loaded {
-			cmds = append(cmds, branchesCmd(i, r.Path))
-		}
-	}
-	return tea.Batch(cmds...)
+	return l.ref, true
 }
 
 func (m *model) finish(v view) {
@@ -465,10 +447,14 @@ func (m *model) finish(v view) {
 }
 
 func (m *model) pane() *pane {
-	if m.view == viewRepos {
+	switch {
+	case m.inBranches():
+		return &m.branches
+	case m.view == viewRepos:
 		return &m.repos
+	default:
+		return &m.sessions
 	}
-	return &m.sessions
 }
 
 // rebuild rebuilds the tables. Not called on cursor movement (only when the
@@ -476,20 +462,10 @@ func (m *model) pane() *pane {
 func (m *model) rebuild() {
 	m.sessions.tbl = buildSessionTable(m.procList, m.th)
 	rs := rows.Build(m.opts.Repos, m.infos)
-	if m.branchMode {
-		rs = rows.BranchView(m.opts.Repos, m.infos, m.branches)
-	}
-	// Focusable (non-Sub) rows are 1:1 with repos in declaration order, so
-	// counting them recovers each row's repo index
-	m.reposRefs = make([]int, len(rs))
-	idx := -1
-	for i, r := range rs {
-		if !r.Sub {
-			idx++
-		}
-		m.reposRefs[i] = idx
-	}
 	m.repos.tbl = buildTable(rs, m.th)
+	if m.open >= 0 && m.open < len(rs) {
+		m.branches.tbl = buildBranchTable(rs[m.open].Repo, rs[m.open], rows.Branches(m.infos[m.open]), m.th)
+	}
 	m.snapCursor(1)
 	m.clampView()
 }
@@ -694,12 +670,13 @@ var helpRows = []struct{ key, desc string }{
 	{"wheel", "move"},
 	{"g / G", "top / bottom"},
 	{"ctrl+d / u", "half page"},
-	{"tab", "toggle branches (repos)"},
-	{"enter", "open in tmux (repos)"},
+	{"enter / l", "show branches (repos)"},
+	{"esc / h", "back to repos (branches)"},
+	{"o", "open in tmux (repos)"},
 	{"p", "switch view"},
 	{"r", "refresh now"},
 	{"?", "toggle help"},
-	{"q / esc", "quit"},
+	{"q / esc", "quit (esc: from repos)"},
 }
 
 // overlayHelp lays the help float over the center of the body.
@@ -806,6 +783,17 @@ func (m *model) noticeLines() []string {
 	return lines
 }
 
+// cleanCount is how many repos are clean and in sync.
+func (m *model) cleanCount() int {
+	n := 0
+	for _, r := range rows.Build(m.opts.Repos, m.infos) {
+		if r.Clean {
+			n++
+		}
+	}
+	return n
+}
+
 func (m *model) statusBar() string {
 	// While refreshing, show only the spinner where idle sits; the slot width is
 	// fixed, so nothing to the left shifts
@@ -824,6 +812,9 @@ func (m *model) statusBar() string {
 	count := countLabel(len(m.procList), "session")
 	if m.view == viewRepos {
 		count = countLabel(len(m.opts.Repos), "repo") + " · " + countLabel(m.opts.Roots, "root")
+		if m.loaded[viewRepos] {
+			count += " · " + strconv.Itoa(m.cleanCount()) + " clean"
+		}
 	}
 
 	sep := m.th.hint.Render(" │ ")
@@ -831,9 +822,6 @@ func (m *model) statusBar() string {
 		m.th.bar.Render("last "+last) + sep +
 		m.th.bar.Render("every "+formatInterval(m.interval())) + sep +
 		m.th.bar.Render(count)
-	if m.view == viewRepos && m.branchMode {
-		left += sep + m.th.bar.Render("branches")
-	}
 	if m.view == viewRepos && m.opts.NoFetch {
 		left += sep + m.th.bar.Render("no-fetch")
 	}

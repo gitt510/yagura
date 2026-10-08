@@ -8,7 +8,7 @@ import (
 )
 
 // The contract that separates the records from the table: a count that is
-// not a number is null, and a failed fetch nulls the remote-derived three
+// not a number is null, and a failed fetch nulls the remote-derived counts
 // even though stale values were recorded.
 func TestRecordsCounts(t *testing.T) {
 	repos := []discover.Repo{
@@ -16,10 +16,11 @@ func TestRecordsCounts(t *testing.T) {
 		{Path: "/r/b", Group: "~/r", Base: "b"},
 		{Path: "/r/c", Group: "~/r", Base: "c"},
 	}
+	feat := []gitinfo.BranchInfo{{Name: "feat", Where: gitinfo.WhereWIP, Current: true, Push: "2", Pull: "0", LastCommit: "2026-10-08"}}
 	infos := []gitinfo.Info{
-		{Changed: "3", Head: "main", Branch: "main", Base: "main", Ahead: "0", Behind: "1", Unmerged: "0"},
-		{Changed: "0", Head: "feat", Branch: "feat", Ahead: gitinfo.Dash, Behind: gitinfo.Dash, Unmerged: gitinfo.Dash},
-		{Changed: "7", Head: "feat", Branch: "feat", Base: "main", Ahead: "2", Behind: "0", Unmerged: "5", FetchFailed: true},
+		{Changed: "3", Head: "main", Branch: "main", Base: "main", MainAhead: "0", MainBehind: "1", WIP: "0", LocalOnly: "2", Gone: "1", RemoteOnly: "0"},
+		{Changed: "0", Head: "feat", Branch: "feat", MainAhead: gitinfo.Dash, MainBehind: gitinfo.Dash, WIP: gitinfo.Dash, LocalOnly: gitinfo.Dash, Gone: gitinfo.Dash, RemoteOnly: gitinfo.Dash},
+		{Changed: "7", Head: "feat", Branch: "feat", Base: "main", MainAhead: "0", MainBehind: "0", WIP: "1", LocalOnly: "0", Gone: "0", RemoteOnly: "0", Branches: feat, FetchFailed: true},
 	}
 
 	got := Records(repos, infos)
@@ -30,12 +31,15 @@ func TestRecordsCounts(t *testing.T) {
 	if got[0].Path != "/r/a" || got[0].Root != "~/r" || got[0].Name != "a" {
 		t.Errorf("identity = %+v", got[0])
 	}
-	if *got[0].Changed != 3 || *got[0].Behind != 1 || got[0].HeadState != "default" {
+	if *got[0].Changed != 3 || *got[0].MainBehind != 1 || *got[0].LocalOnly != 2 || *got[0].Gone != 1 || got[0].HeadState != "default" {
 		t.Errorf("plain repo = %+v", got[0])
 	}
+	if got[0].Branches == nil || len(got[0].Branches) != 0 {
+		t.Errorf("no branches should be an empty list: %+v", got[0].Branches)
+	}
 
-	// no upstream: nothing to compare against, so null — not 0
-	if got[1].Ahead != nil || got[1].Behind != nil || got[1].Unmerged != nil {
+	// no default branch: nothing to compare against, so null — not 0
+	if got[1].MainAhead != nil || got[1].MainBehind != nil || got[1].WIP != nil {
 		t.Errorf("dash counts should be null: %+v", got[1])
 	}
 	if *got[1].Changed != 0 || got[1].HeadState != "unknown" {
@@ -43,11 +47,14 @@ func TestRecordsCounts(t *testing.T) {
 	}
 
 	// fetch failed: the recorded numbers are stale, so they are withheld
-	if got[2].Ahead != nil || got[2].Behind != nil || got[2].Unmerged != nil {
+	if got[2].MainAhead != nil || got[2].WIP != nil || got[2].RemoteOnly != nil {
 		t.Errorf("stale counts should be null: %+v", got[2])
 	}
 	if !got[2].FetchFailed || *got[2].Changed != 7 || got[2].HeadState != "branch" {
 		t.Errorf("fetch failed = %+v", got[2])
+	}
+	if b := got[2].Branches; len(b) != 1 || b[0].Where != "wip" || !b[0].Current || b[0].Push != nil || *b[0].LastCommit != "2026-10-08" {
+		t.Errorf("branch record = %+v", b)
 	}
 }
 
@@ -55,7 +62,7 @@ func TestRecordsCounts(t *testing.T) {
 func TestRecordsPending(t *testing.T) {
 	got := Records([]discover.Repo{{Path: "/r/a", Base: "a"}}, []gitinfo.Info{PendingInfo()})
 	r := got[0]
-	if r.Changed != nil || r.Ahead != nil || r.Behind != nil || r.Unmerged != nil {
+	if r.Changed != nil || r.MainAhead != nil || r.WIP != nil || r.LocalOnly != nil || r.RemoteOnly != nil {
 		t.Errorf("pending counts should be null: %+v", r)
 	}
 }

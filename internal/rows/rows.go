@@ -23,11 +23,14 @@ const Unsynced = "x"
 // PendingInfo returns the Info shown for a row that has never been collected.
 func PendingInfo() gitinfo.Info {
 	return gitinfo.Info{
-		Changed:  Pending,
-		Head:     Pending,
-		Ahead:    Pending,
-		Behind:   Pending,
-		Unmerged: Pending,
+		Changed:    Pending,
+		Head:       Pending,
+		MainAhead:  Pending,
+		MainBehind: Pending,
+		WIP:        Pending,
+		LocalOnly:  Pending,
+		Gone:       Pending,
+		RemoteOnly: Pending,
 	}
 }
 
@@ -60,16 +63,42 @@ func Build(repos []discover.Repo, infos []gitinfo.Info) []render.Row {
 // For a repo whose fetch failed, the remote-derived columns become Unsynced.
 // CHANGED / HEAD are local facts, so they are shown as they are.
 func One(r discover.Repo, in gitinfo.Info) render.Row {
-	return render.Row{
-		Group:     r.Group,
-		Repo:      r.Base,
-		Head:      in.Head,
-		HeadState: headState(in),
-		Changed:   in.Changed,
-		Ahead:     unsync(in.Ahead, in.FetchFailed),
-		Behind:    unsync(in.Behind, in.FetchFailed),
-		Unmerged:  unsync(in.Unmerged, in.FetchFailed),
+	row := render.Row{
+		Group:      r.Group,
+		Repo:       r.Base,
+		Head:       in.Head,
+		HeadState:  headState(in),
+		Changed:    in.Changed,
+		Main:       mainLabel(in),
+		WIP:        unsync(in.WIP, in.FetchFailed),
+		LocalOnly:  localOnlyLabel(in),
+		RemoteOnly: unsync(in.RemoteOnly, in.FetchFailed),
 	}
+	row.Clean = row.HeadState == render.HeadDefault && row.Changed == "0" && row.Main == render.MainSynced &&
+		row.WIP == "0" && row.LocalOnly == "0" && row.RemoteOnly == "0"
+	return row
+}
+
+// mainLabel puts the default branch's push and pull counts in one cell.
+func mainLabel(in gitinfo.Info) string {
+	switch {
+	case in.MainAhead == Pending:
+		return Pending
+	case in.MainAhead == gitinfo.Dash || in.MainBehind == gitinfo.Dash:
+		return gitinfo.Dash
+	case in.FetchFailed:
+		return Unsynced
+	}
+	return "↑" + in.MainAhead + " ↓" + in.MainBehind
+}
+
+// localOnlyLabel adds how many of the local-only branches are gone, when any.
+func localOnlyLabel(in gitinfo.Info) string {
+	v := unsync(in.LocalOnly, in.FetchFailed)
+	if v != in.LocalOnly || in.Gone == "" || in.Gone == "0" || in.Gone == Pending || in.Gone == gitinfo.Dash {
+		return v
+	}
+	return v + " · " + in.Gone + " gone"
 }
 
 // unsync drops a recorded value to Unsynced when the fetch failed.
@@ -82,66 +111,27 @@ func unsync(v string, failed bool) string {
 	return Unsynced
 }
 
-// BranchView flattens each repo into one row per local branch, for the TUI's
-// branch mode. The default branch always leads, so it holds the same slot in
-// every repo block; the rest follow by name. The block's first row carries
-// the REPO name and is the only focusable one (Sub false), keeping repo and
-// focusable row 1:1. The checked-out branch is the only row with a working
-// tree (CHANGED); its number against the others' dash tells them apart, so
-// no marker is needed. A repo whose branches have not been collected yet
-// carries a trailing pending row, so its absence is never mistaken for "no
-// other branches". branches is keyed by repo index; a present key means
-// collected, even when empty.
-func BranchView(repos []discover.Repo, infos []gitinfo.Info, branches map[int][]gitinfo.BranchInfo) []render.Row {
-	type entry struct {
-		name    string
-		def     bool
-		current bool
-		row     render.Row
-	}
-
-	var out []render.Row
-	for i, r := range repos {
-		in := infos[i]
-		list, loaded := branches[i]
-
-		h := One(r, in)
-		es := make([]entry, 0, len(list)+2)
-		es = append(es, entry{name: h.Head, def: h.HeadState == render.HeadDefault, current: true, row: h})
-		for _, b := range list {
-			state := render.HeadBranch
-			if b.Name == in.Base {
-				state = render.HeadDefault
-			}
-			es = append(es, entry{name: gitinfo.ShortHead(b.Name), def: state == render.HeadDefault, row: render.Row{
-				Group:     r.Group,
-				HeadState: state,
-				Changed:   gitinfo.Dash,
-				Ahead:     unsync(b.Ahead, in.FetchFailed),
-				Behind:    unsync(b.Behind, in.FetchFailed),
-				Unmerged:  unsync(b.Unmerged, in.FetchFailed),
-			}})
+// Branches turns one repo's branches into rows for the branch list. A failed
+// fetch leaves where each branch is as last seen, but the push / pull counts
+// become Unsynced.
+func Branches(in gitinfo.Info) []render.BranchRow {
+	out := make([]render.BranchRow, len(in.Branches))
+	for i, b := range in.Branches {
+		mark := "  "
+		if b.Current {
+			mark = "* "
 		}
-		sort.SliceStable(es, func(a, b int) bool {
-			if es[a].def != es[b].def {
-				return es[a].def
-			}
-			return es[a].name < es[b].name
-		})
-		if !loaded {
-			es = append(es, entry{name: Pending, row: render.Row{
-				Group: r.Group, Changed: Pending, Ahead: Pending, Behind: Pending, Unmerged: Pending,
-			}})
+		where := b.Where.String()
+		if b.Gone {
+			where += " · gone"
 		}
-
-		for j, e := range es {
-			row := e.row
-			row.Head = e.name
-			row.Repo, row.Sub = "", true
-			if j == 0 {
-				row.Repo, row.Sub = r.Base, false
-			}
-			out = append(out, row)
+		out[i] = render.BranchRow{
+			Name:       mark + gitinfo.ShortHead(b.Name),
+			Where:      where,
+			Kind:       b.Where.String(),
+			Push:       unsync(b.Push, in.FetchFailed),
+			Pull:       unsync(b.Pull, in.FetchFailed),
+			LastCommit: orDash(b.LastCommit),
 		}
 	}
 	return out

@@ -21,14 +21,35 @@ type RepoRecord struct {
 	Head      string `json:"head"`
 	HeadState string `json:"head_state"`
 
-	Changed  *int `json:"changed"`
-	Ahead    *int `json:"ahead"`
-	Behind   *int `json:"behind"`
-	Unmerged *int `json:"unmerged"`
+	Changed *int `json:"changed"`
+	// MainAhead / MainBehind: the local default branch against origin
+	MainAhead  *int `json:"main_ahead"`
+	MainBehind *int `json:"main_behind"`
+	// Every other branch is counted in exactly one of WIP / LocalOnly /
+	// RemoteOnly; Gone is the part of LocalOnly deleted on the remote
+	WIP        *int `json:"wip"`
+	LocalOnly  *int `json:"local_only"`
+	Gone       *int `json:"gone"`
+	RemoteOnly *int `json:"remote_only"`
+
+	Branches []BranchRecord `json:"branches"`
 
 	// FetchFailed tells the null counts above apart from a repo that simply
 	// has no upstream: here the remote is unknown, not absent.
 	FetchFailed bool `json:"fetch_failed"`
+}
+
+// BranchRecord is one branch of a repo.
+type BranchRecord struct {
+	Name    string `json:"name"`
+	Where   string `json:"where"` // default / wip / local-only / remote-only
+	Current bool   `json:"current"`
+	Gone    bool   `json:"gone"`
+	// Push / Pull: the local branch against origin/<same name>; null when
+	// either side is missing or the fetch failed
+	Push       *int    `json:"push"`
+	Pull       *int    `json:"pull"`
+	LastCommit *string `json:"last_commit"`
 }
 
 // SessionRecord is one running agent CLI session.

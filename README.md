@@ -3,7 +3,7 @@
 A lookout tower for local work: the drift of every repo under your declared
 roots, and the agent CLI sessions running on the machine right now.
 
-![yagura repos view: a drift table with branch mode toggled by tab](docs/demo.gif)
+![yagura repos view: a drift table, with one repo opened into its branch list by enter](docs/demo.gif)
 
 ## Views
 
@@ -17,12 +17,18 @@ roots, and the agent CLI sessions running on the machine right now.
 
 - Repos are grouped by declared root
 - A root that is itself a git repo is watched as one; otherwise its direct children are watched, without recursion
-- Columns: `HEAD`, `CHANGED` (working-tree changes), `AHEAD` / `BEHIND` (against the upstream), `UNMERGED` (commits not on `origin/HEAD`)
+- Columns: `HEAD`, `CHANGED` (working-tree changes), `MAIN` (`↑` unpushed / `↓` unpulled commits of the default branch against `origin`), `WIP` / `LOCAL-ONLY` / `REMOTE-ONLY` (branch counts)
+- The default branch is the one `origin/HEAD` points at
+- Every other branch is counted in exactly one of `WIP` (local and on `origin`), `LOCAL-ONLY`, `REMOTE-ONLY`, matched by name
+- `LOCAL-ONLY` adds `· <n> gone` for branches whose upstream was deleted on the remote; a branch never pushed is not gone
+- A repo on its default branch with every count at 0 is clean and in sync: its row is dimmed, and the status bar counts these repos
 - Every refresh fetches each repo with `--prune`
-- When a fetch fails, `AHEAD` / `BEHIND` / `UNMERGED` show `x` instead of stale numbers
+- When a fetch fails, `MAIN` / `WIP` / `LOCAL-ONLY` / `REMOTE-ONLY` show `x` instead of stale numbers
 - Without any declared root, startup exits with setup instructions
-- `enter` opens the focused repo as a new window in the `repos.tmux-session` session (created if missing), with the repo path as cwd; the outcome lands in the footer
-- `tab` toggles branch mode: one row per local branch instead of one per repo — the default branch always first, the rest by name; the checked-out branch alone carries `CHANGED`, and the cursor sits on the row with the repo name; `AHEAD` / `BEHIND` count against each branch's own upstream, `UNMERGED` against `origin/HEAD`
+- `enter` (or `l`) opens the focused repo's branch list; `esc` (or `h`) steps back to the repos table
+- The branch list shows the working tree in one line, then one row per branch: `BRANCH` (`*` on the checked-out one), `WHERE` (`default` / `wip` / `local-only` / `remote-only`, plus `· gone`), `PUSH ↑` / `PULL ↓` (against `origin/<same name>`; `-` when either side is missing), `LAST COMMIT`
+- The default branch leads the branch list; the rest follow by name
+- `o` opens the focused repo, or the one whose branches are shown, as a new window in the `repos.tmux-session` session (created if missing), with the repo path as cwd; the outcome lands in the footer
 
 ## Sessions view
 
@@ -34,7 +40,7 @@ roots, and the agent CLI sessions running on the machine right now.
 ## JSON output
 
 - `--json` prints the selected view once as a single JSON document, in place of the table
-- Counts are numbers; a count with nothing to compare against — no upstream, or a fetch that failed — is `null`, never `0`
+- Counts are numbers; a count with nothing to compare against — no default branch, a branch missing on one side, or a fetch that failed — is `null`, never `0`
 - `fetch_failed` tells the two apart: `true` means the remote is unknown, not absent
 - Each repo carries its absolute `path`, so a reader can act on it directly
 - A failed fetch is reported in the document (`fetch_failed`, `warnings`), not as a non-zero exit
@@ -50,9 +56,16 @@ roots, and the agent CLI sessions running on the machine right now.
       "head": "main",
       "head_state": "default",
       "changed": 0,
-      "ahead": 1,
-      "behind": 0,
-      "unmerged": 1,
+      "main_ahead": 1,
+      "main_behind": 0,
+      "wip": 0,
+      "local_only": 1,
+      "gone": 1,
+      "remote_only": 0,
+      "branches": [
+        {"name": "main", "where": "default", "current": true, "gone": false, "push": 1, "pull": 0, "last_commit": "2026-10-08"},
+        {"name": "fix/typo", "where": "local-only", "current": false, "gone": true, "push": null, "pull": null, "last_commit": "2026-10-01"}
+      ],
       "fetch_failed": false
     }
   ],
@@ -66,7 +79,7 @@ roots, and the agent CLI sessions running on the machine right now.
 ## Requirements
 
 - `git`, `ps`, and `lsof` in `PATH`
-- `tmux` is optional; without it the `TMUX` column shows `-`, and it is required only when `enter` opens a repo
+- `tmux` is optional; without it the `TMUX` column shows `-`, and it is required only when `o` opens a repo
 
 ## Setup
 
@@ -84,7 +97,7 @@ yagura --json            # one-shot repos document, for a script or an agent
 
 ```sh
 # every repo with local work or drift
-yagura --json | jq '.repos[] | select(.changed > 0 or .behind > 0 or .unmerged > 0)'
+yagura --json | jq '.repos[] | select(.changed > 0 or .main_ahead > 0 or .main_behind > 0 or .wip > 0 or .local_only > 0 or .remote_only > 0)'
 ```
 
 ## Configuration
@@ -97,7 +110,7 @@ yagura --json | jq '.repos[] | select(.changed > 0 or .behind > 0 or .unmerged >
 | --- | --- | --- |
 | `repos.roots` | — | roots to watch |
 | `repos.interval` | `"1m"` | refresh interval of the repos view |
-| `repos.tmux-session` | — | tmux session that `enter` opens repos into; unset keeps `enter` inert |
+| `repos.tmux-session` | — | tmux session that `o` opens repos into; unset keeps `o` inert |
 | `sessions.commands` | `["claude"]` | process names to watch, matched against the command basename |
 | `sessions.interval` | `"10s"` | refresh interval of the sessions view |
 

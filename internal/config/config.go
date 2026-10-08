@@ -30,8 +30,8 @@ type Repos struct {
 	// Interval is the auto-refresh interval. It fetches, so the default is
 	// slower than procs
 	Interval Duration `toml:"interval"`
-	// TmuxSession is the tmux session that enter opens repos into. Empty
-	// keeps enter inert; tmux is required only when this is used
+	// TmuxSession is the tmux session that o opens repos into. Empty
+	// keeps o inert; tmux is required only when this is used
 	TmuxSession string `toml:"tmux-session"`
 }
 

@@ -28,7 +28,7 @@ Type "j"
 Sleep 600ms
 Type "j"
 Sleep 1.2s
-Tab
+Enter
 Sleep 3.5s
-Tab
+Escape
 Sleep 3s

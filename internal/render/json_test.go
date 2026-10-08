@@ -38,7 +38,7 @@ func TestJSONNullVsZero(t *testing.T) {
 	if !strings.Contains(out, `"changed": 0`) {
 		t.Errorf("zero count lost:\n%s", out)
 	}
-	if !strings.Contains(out, `"behind": null`) {
+	if !strings.Contains(out, `"main_behind": null`) {
 		t.Errorf("unset count is not null:\n%s", out)
 	}
 }
