@@ -9,7 +9,7 @@ roots = [
 ]
 # refresh interval of the repos view (fetches each repo).
 interval = "1m"
-# tmux session that enter opens the focused repo into (created if missing).
+# tmux session that o opens the focused repo into (created if missing).
 tmux-session = "work"
 
 [sessions]

@@ -221,7 +221,7 @@ func plain(repos []discover.Repo, warnings []string, opts options) int {
 	render.Table(os.Stdout, rows.Build(repos, infos), useColor)
 
 	if opts.noFetch {
-		fmt.Println("(no fetch — AHEAD/BEHIND reflect recorded remote-tracking refs)")
+		fmt.Println("(no fetch — MAIN / WIP / LOCAL-ONLY / REMOTE-ONLY reflect recorded remote-tracking refs)")
 	} else if len(failed) > 0 {
 		fmt.Fprintf(os.Stderr, "[warn] fetch failed: %s\n", strings.Join(failed, ", "))
 		return 1

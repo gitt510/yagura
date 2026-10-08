@@ -42,15 +42,26 @@ type Row struct {
 	Head  string
 	// HeadState gives meaning to what Head holds, so nobody has to infer it from the string
 	HeadState HeadState
-	// Sub marks an information row of the repo above (branch mode): group
-	// counts skip it and the TUI cursor never stops on it, keeping repo and
-	// focusable row 1:1
-	Sub bool
+	// Clean: on the default branch, nothing changed, the default branch in
+	// sync with origin, and no other branch anywhere
+	Clean bool
 
-	Changed  string
-	Ahead    string
-	Behind   string
-	Unmerged string
+	Changed    string
+	Main       string // "↑<push> ↓<pull>" for the default branch against origin
+	WIP        string
+	LocalOnly  string // "<n>" or "<n> · <gone> gone"
+	RemoteOnly string
+}
+
+// BranchRow is one branch of a repo, for the TUI's branch list. All values
+// are preformatted strings.
+type BranchRow struct {
+	Name       string // "* " marks the checked-out branch
+	Where      string // default / wip / local-only / remote-only, plus " · gone"
+	Kind       string // Where without the gone suffix, for coloring
+	Push       string
+	Pull       string
+	LastCommit string
 }
 
 // SessionRow is the display values for a single session, all preformatted
@@ -123,12 +134,21 @@ type column struct {
 var driftColumns = []column{
 	// Exists only locally = unrecoverable once lost
 	{"CHANGED", func(r Row) string { return r.Changed }, func(_ string, p palette) string { return p.yellow }},
-	// Unpushed commits are, from another machine, an inconsistency that already exists
-	{"AHEAD", func(r Row) string { return r.Ahead }, func(_ string, p palette) string { return p.red }},
-	// Falling behind the remote reads as "needs action" too, so it shares red
-	{"BEHIND", func(r Row) string { return r.Behind }, func(_ string, p palette) string { return p.red }},
-	{"UNMERGED", func(r Row) string { return r.Unmerged }, func(_ string, p palette) string { return p.cyan }},
+	// Unpushed or unpulled commits on the default branch already disagree with
+	// what another machine sees
+	{"MAIN", func(r Row) string { return r.Main }, func(_ string, p palette) string { return p.red }},
+	{"WIP", func(r Row) string { return r.WIP }, func(_ string, p palette) string { return p.cyan }},
+	// Exists only locally, like CHANGED
+	{"LOCAL-ONLY", func(r Row) string { return r.LocalOnly }, func(_ string, p palette) string { return p.yellow }},
+	{"REMOTE-ONLY", func(r Row) string { return r.RemoteOnly }, func(_ string, p palette) string { return p.red }},
 }
+
+// MainSynced is the MAIN value of a default branch in sync with origin.
+const MainSynced = "↑0 ↓0"
+
+// Quiet reports a measured value with no movement: 0, or a synced MAIN.
+// It shares the dim tone with Absent, so only movement carries color.
+func Quiet(v string) bool { return v == "0" || v == MainSynced }
 
 // Table writes the drift table, repeating the heading and column headers per group.
 func Table(w io.Writer, rows []Row, useColor bool) {
@@ -166,7 +186,7 @@ func Table(w io.Writer, rows []Row, useColor bool) {
 			v := c.value(r)
 			// Absent and 0 sink into dim; numbers with movement take the column color
 			tone := ""
-			if Absent(v) || v == "0" {
+			if Absent(v) || Quiet(v) {
 				tone = p.dim
 			} else {
 				tone = c.tone(v, p)

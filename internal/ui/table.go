@@ -46,7 +46,7 @@ func toneOf(fixed func(theme) lipgloss.Style) func(string, theme) lipgloss.Style
 		}
 		// 0 keeps its character (measured, unlike the structural -) but sinks
 		// into dim, so only movement carries color
-		if render.Absent(v) || v == "0" {
+		if render.Absent(v) || render.Quiet(v) {
 			return th.dim
 		}
 		return fixed(th)
@@ -57,12 +57,49 @@ var driftCols = []colDef{
 	{"REPO", false, func(r render.Row) string { return r.Repo }, nil},
 	{"HEAD", false, func(r render.Row) string { return r.Head }, nil},
 	{"CHANGED", true, func(r render.Row) string { return r.Changed }, toneOf(func(t theme) lipgloss.Style { return t.local })},
-	// Unpushed commits are an inconsistency that has already happened as seen from
-	// another machine
-	{"AHEAD", true, func(r render.Row) string { return r.Ahead }, toneOf(func(t theme) lipgloss.Style { return t.danger })},
-	// Falling behind the remote reads as "needs action" too, so it shares red
-	{"BEHIND", true, func(r render.Row) string { return r.Behind }, toneOf(func(t theme) lipgloss.Style { return t.danger })},
-	{"UNMERGED", true, func(r render.Row) string { return r.Unmerged }, toneOf(func(t theme) lipgloss.Style { return t.remote })},
+	// Unpushed or unpulled commits on the default branch already disagree with
+	// what another machine sees
+	{"MAIN", true, func(r render.Row) string { return r.Main }, toneOf(func(t theme) lipgloss.Style { return t.danger })},
+	{"WIP", true, func(r render.Row) string { return r.WIP }, toneOf(func(t theme) lipgloss.Style { return t.remote })},
+	// Exists only locally, like CHANGED
+	{"LOCAL-ONLY", true, func(r render.Row) string { return r.LocalOnly }, toneOf(func(t theme) lipgloss.Style { return t.local })},
+	{"REMOTE-ONLY", true, func(r render.Row) string { return r.RemoteOnly }, toneOf(func(t theme) lipgloss.Style { return t.danger })},
+}
+
+// branchCols is the branch list a repo opens into. Its rows are branches, so
+// it shares no columns with the repos table.
+type branchColDef struct {
+	header string
+	right  bool
+	value  func(render.BranchRow) string
+	style  func(r render.BranchRow, v string, th theme) lipgloss.Style
+}
+
+var branchCols = []branchColDef{
+	{"BRANCH", false, func(r render.BranchRow) string { return r.Name }, func(render.BranchRow, string, theme) lipgloss.Style { return lipgloss.NewStyle() }},
+	{"WHERE", false, func(r render.BranchRow) string { return r.Where }, whereTone},
+	{"PUSH ↑", true, func(r render.BranchRow) string { return r.Push }, func(_ render.BranchRow, v string, th theme) lipgloss.Style {
+		return toneOf(func(t theme) lipgloss.Style { return t.danger })(v, th)
+	}},
+	{"PULL ↓", true, func(r render.BranchRow) string { return r.Pull }, func(_ render.BranchRow, v string, th theme) lipgloss.Style {
+		return toneOf(func(t theme) lipgloss.Style { return t.danger })(v, th)
+	}},
+	{"LAST COMMIT", true, func(r render.BranchRow) string { return r.LastCommit }, func(render.BranchRow, string, theme) lipgloss.Style { return lipgloss.NewStyle() }},
+}
+
+// whereTone colors a branch by where it lives, with the same meaning as the
+// repos table's count columns.
+func whereTone(r render.BranchRow, _ string, th theme) lipgloss.Style {
+	switch r.Kind {
+	case "wip":
+		return th.remote
+	case "local-only":
+		return th.local
+	case "remote-only":
+		return th.danger
+	default:
+		return th.dim
+	}
 }
 
 // The default branch is the normal case, so it keeps the plain color; only a
@@ -85,7 +122,6 @@ type lineKind int
 const (
 	lineChrome lineKind = iota // Borders, headings, blank lines; the cursor never stops here
 	lineRepo
-	lineNote // Data cells rendered like lineRepo, but the cursor never stops here
 )
 
 type cell struct {
@@ -134,9 +170,6 @@ func buildTable(rs []render.Row, th theme) table {
 			t.push(group, t.top())
 			t.push(group, t.headerRow(headersOf(cols), rightsOf(cols)))
 			t.push(group, t.rule())
-		} else if r.Sub {
-			// A rule between a repo's branches that leaves the REPO column open
-			t.push(group, t.subRule())
 		} else {
 			t.push(group, t.rule())
 		}
@@ -146,11 +179,7 @@ func buildTable(rs []render.Row, th theme) table {
 			v := c.value(r)
 			cells[i] = cell{text: pad(v, widths[i], c.right), style: cellStyle(c, r, v, th)}
 		}
-		kind := lineRepo
-		if r.Sub {
-			kind = lineNote
-		}
-		t.lines = append(t.lines, tableLine{kind: kind, group: group, cells: cells, ref: i})
+		t.lines = append(t.lines, tableLine{kind: lineRepo, group: group, cells: cells, ref: i})
 	}
 	if group != "" {
 		t.push(group, t.bottom())
@@ -158,13 +187,60 @@ func buildTable(rs []render.Row, th theme) table {
 	return t
 }
 
+// buildBranchTable lays out one repo's branches: a heading naming the repo,
+// the working tree in one line (it belongs to no branch), then the bordered
+// branch table.
+func buildBranchTable(repo string, head render.Row, rs []render.BranchRow, th theme) table {
+	widths := make([]int, len(branchCols))
+	headers := make([]string, len(branchCols))
+	rights := make([]bool, len(branchCols))
+	for i, c := range branchCols {
+		headers[i], rights[i] = c.header, c.right
+		widths[i] = lipgloss.Width(c.header)
+		for _, r := range rs {
+			if n := lipgloss.Width(c.value(r)); n > widths[i] {
+				widths[i] = n
+			}
+		}
+	}
+
+	t := table{widths: widths, th: th}
+	t.push(repo, "")
+	t.push(repo, th.dim.Render("repos › ")+th.group.Render(repo)+th.groupCount.Render(" · "+countLabel(len(rs), "branch")))
+	tree := th.dim.Render("clean")
+	if head.Changed != "0" && !render.Absent(head.Changed) {
+		tree = th.local.Render(head.Changed + " changed")
+	}
+	t.push(repo, th.dim.Render("working tree: ")+tree+th.dim.Render(" on ")+headTone(head.HeadState, th).Render(head.Head))
+	t.push(repo, t.top())
+	t.push(repo, t.headerRow(headers, rights))
+	for i, r := range rs {
+		t.push(repo, t.rule())
+		cells := make([]cell, len(branchCols))
+		for j, c := range branchCols {
+			v := c.value(r)
+			cells[j] = cell{text: pad(v, widths[j], c.right), style: c.style(r, v, th)}
+		}
+		t.lines = append(t.lines, tableLine{kind: lineRepo, group: repo, cells: cells, ref: i})
+	}
+	t.push(repo, t.bottom())
+	return t
+}
+
 // cellStyle leaves REPO / HEAD out of the column definitions and derives them
-// from the row's state instead.
+// from the row's state instead. A clean and in-sync repo sinks into dim as a
+// whole, so the rows that need attention stand out.
 func cellStyle(c colDef, r render.Row, v string, th theme) lipgloss.Style {
 	switch c.header {
 	case "REPO":
+		if r.Clean {
+			return th.dim
+		}
 		return lipgloss.NewStyle()
 	case "HEAD":
+		if r.Clean {
+			return th.dim
+		}
 		return headTone(r.HeadState, th)
 	default:
 		return c.style(v, th)
@@ -183,15 +259,6 @@ func (t table) top() string {
 
 func (t table) rule() string {
 	return t.th.border.Render(teeL + strings.Join(t.dashes(), cross) + teeR)
-}
-
-// subRule separates a repo's branches without cutting the REPO column, so the
-// repo cell reads as one block spanning its branches.
-func (t table) subRule() string {
-	b := t.th.border
-	segs := t.dashes()
-	segs[0] = strings.Repeat(" ", t.widths[0]+2)
-	return b.Render(barV + segs[0] + teeL + strings.Join(segs[1:], cross) + teeR)
 }
 
 func (t table) bottom() string {
@@ -278,7 +345,11 @@ func (t table) renderLine(i int, selected bool, width int) string {
 }
 
 func countLabel(n int, unit string) string {
-	if n != 1 {
+	switch {
+	case n == 1:
+	case strings.HasSuffix(unit, "ch"):
+		unit += "es"
+	default:
 		unit += "s"
 	}
 	return strconv.Itoa(n) + " " + unit
@@ -287,9 +358,7 @@ func countLabel(n int, unit string) string {
 func groupCounts(rs []render.Row) map[string]int {
 	c := map[string]int{}
 	for _, r := range rs {
-		if !r.Sub {
-			c[r.Group]++
-		}
+		c[r.Group]++
 	}
 	return c
 }

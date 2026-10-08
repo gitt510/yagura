@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build a synthetic ghq-style tree for the README demo, under the directory
 # given as $1 (used as a throwaway $HOME). Each fake repo gets a local bare
-# "origin", so AHEAD / BEHIND / UNMERGED show real numbers with no network.
+# "origin", so the MAIN and branch columns show real numbers with no network.
 set -euo pipefail
 
 home=$1
@@ -40,16 +40,20 @@ commit() {
 	git -C "$root/$1" commit -qm "$3"
 }
 
-# api-server: clean and in sync; a merged-back fix branch for branch mode
+# api-server: clean and in sync
 new_repo api-server
-git -C "$root/api-server" branch fix/timeout
 
-# billing-worker: behind its upstream by 2 (committed, pushed, rewound)
+# billing-worker: main behind origin by 2 (committed, pushed, rewound), and a
+# fix branch whose remote side was deleted after its merge (gone)
 new_repo billing-worker
 commit billing-worker main.go "feat: add retry queue"
 commit billing-worker main.go "fix: cap retry backoff"
 git -C "$root/billing-worker" push -q origin main
 git -C "$root/billing-worker" reset -q --hard HEAD~2
+git -C "$root/billing-worker" switch -qc fix/timeout
+git -C "$root/billing-worker" push -qu origin fix/timeout
+git -C "$root/billing-worker" push -q origin --delete fix/timeout
+git -C "$root/billing-worker" switch -q main
 
 # demo-cli: a feature branch ahead of its upstream, with a dirty tree
 new_repo demo-cli
@@ -60,7 +64,12 @@ git -C "$root/demo-cli" push -qu origin feat/parser
 commit demo-cli parser.go "feat: parse flags"
 echo "wip" >>"$root/demo-cli/parser.go"
 echo "notes" >"$root/demo-cli/TODO.md"
+# a branch pushed and then dropped locally: it lives only on origin
+git -C "$root/demo-cli" branch docs/usage main
+git -C "$root/demo-cli" push -q origin docs/usage
+git -C "$root/demo-cli" branch -qD docs/usage
 
-# docs-site: in sync, one uncommitted edit
+# docs-site: in sync, one uncommitted edit, and a branch never pushed
 new_repo docs-site
 echo "draft" >>"$root/docs-site/README.md"
+git -C "$root/docs-site" branch draft/intro

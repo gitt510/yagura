@@ -4,7 +4,11 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/gitt510/yagura/internal/discover"
+	"github.com/gitt510/yagura/internal/gitinfo"
 )
 
 // The auto-refresh interval is per view. Running repos at the procs rate would
@@ -66,5 +70,27 @@ func TestGradientLine(t *testing.T) {
 	plain := []lipgloss.Style{{}, {}, {}}
 	if got := gradientLine("abcdefg", plain); got != "abcdefg" {
 		t.Errorf("gradientLine = %q, want abcdefg", got)
+	}
+}
+
+// enter opens the focused repo's branch list and esc steps back to the repos
+// table; only on the repos table does esc quit.
+func TestBranchesNavigation(t *testing.T) {
+	m := newModel(Options{Repos: []discover.Repo{{Group: "~/g", Base: "a"}, {Group: "~/g", Base: "b"}}})
+	m.width, m.height = 100, 40
+	m.infos[1] = gitinfo.Info{Changed: "0", Head: "main", Branch: "main", Base: "main",
+		Branches: []gitinfo.BranchInfo{{Name: "main", Where: gitinfo.WhereDefault, Current: true, Push: "0", Pull: "0"}}}
+	m.rebuild()
+
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.inBranches() || m.open != 1 {
+		t.Fatalf("enter: open = %d, want the focused repo 1", m.open)
+	}
+	if _, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc}); cmd != nil || m.inBranches() {
+		t.Errorf("esc in the branch list should step back, not quit")
+	}
+	if _, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc}); cmd == nil {
+		t.Errorf("esc on the repos table should quit")
 	}
 }

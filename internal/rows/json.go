@@ -25,14 +25,27 @@ func Records(repos []discover.Repo, infos []gitinfo.Info) []render.RepoRecord {
 			Head:        in.Head,
 			HeadState:   headState(in).String(),
 			Changed:     num(in.Changed),
-			Ahead:       num(in.Ahead),
-			Behind:      num(in.Behind),
-			Unmerged:    num(in.Unmerged),
+			MainAhead:   num(in.MainAhead),
+			MainBehind:  num(in.MainBehind),
+			WIP:         num(in.WIP),
+			LocalOnly:   num(in.LocalOnly),
+			Gone:        num(in.Gone),
+			RemoteOnly:  num(in.RemoteOnly),
+			Branches:    make([]render.BranchRecord, len(in.Branches)),
 			FetchFailed: in.FetchFailed,
+		}
+		for j, b := range in.Branches {
+			rec.Branches[j] = render.BranchRecord{
+				Name: b.Name, Where: b.Where.String(), Current: b.Current, Gone: b.Gone,
+				Push: num(b.Push), Pull: num(b.Pull), LastCommit: str(b.LastCommit),
+			}
 		}
 		// a stale remote-tracking ref is not an answer; say so with null
 		if in.FetchFailed {
-			rec.Ahead, rec.Behind, rec.Unmerged = nil, nil, nil
+			rec.MainAhead, rec.MainBehind, rec.WIP, rec.LocalOnly, rec.Gone, rec.RemoteOnly = nil, nil, nil, nil, nil, nil
+			for j := range rec.Branches {
+				rec.Branches[j].Push, rec.Branches[j].Pull = nil, nil
+			}
 		}
 		out[i] = rec
 	}

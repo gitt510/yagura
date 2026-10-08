@@ -1,9 +1,11 @@
-// Package gitinfo collects per-repo working-tree / upstream / default-branch drift.
+// Package gitinfo collects per-repo working-tree drift, the default branch
+// against origin, and where every other branch lives.
 package gitinfo
 
 import (
 	"bytes"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,9 +25,19 @@ type Info struct {
 	Branch   string // empty when detached
 	Base     string // origin/HEAD's branch name (origin/ stripped); empty if unknown
 	Detached bool
-	Ahead    string
-	Behind   string
-	Unmerged string
+	// MainAhead / MainBehind compare the local default branch with its
+	// origin counterpart: commits not pushed / not pulled
+	MainAhead  string
+	MainBehind string
+	// Every branch other than the default falls into exactly one of these,
+	// by where it exists. Gone is the part of LocalOnly whose upstream was
+	// deleted on the remote
+	WIP        string
+	LocalOnly  string
+	Gone       string
+	RemoteOnly string
+	// Branches lists every branch, the default one first
+	Branches []BranchInfo
 	// FetchFailed marks that fetch failed and collection ran against a stale
 	// remote-tracking ref. Whether fetch succeeded is decided outside
 	// Collect, so the caller sets this
@@ -113,7 +125,7 @@ func inWorkTree(path string) bool {
 
 // Collect reads the drift for a single repo.
 func Collect(path string) Info {
-	info := Info{Changed: "0", Ahead: Dash, Behind: Dash, Unmerged: Dash}
+	info := Info{Changed: "0", MainAhead: Dash, MainBehind: Dash, WIP: Dash, LocalOnly: Dash, Gone: Dash, RemoteOnly: Dash}
 
 	status, _ := git(path, "status", "--porcelain")
 	info.Changed = strconv.Itoa(countLines(status))
@@ -129,63 +141,158 @@ func Collect(path string) Info {
 	}
 	info.Head = shorten(head, headMax)
 
-	// left = behind, right = ahead; a HEAD with no upstream stays dash
-	if counts, err := git(path, "rev-list", "--left-right", "--count", "@{upstream}...HEAD"); err == nil {
-		if f := strings.Fields(counts); len(f) >= 2 {
-			info.Behind, info.Ahead = f[0], f[1]
-		}
-	}
-
 	// the default branch differs per repo (main / dev / ...), so read it from origin/HEAD
 	if base, err := git(path, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil && base != "" {
 		info.Base = strings.TrimPrefix(base, "origin/")
-		if n, err := git(path, "rev-list", "--count", base+"..HEAD"); err == nil {
-			info.Unmerged = n
-		}
 	}
 
+	list, err := Branches(path, info.Base, branch)
+	if err != nil {
+		return info
+	}
+	info.Branches = list
+	var wip, local, gone, remote int
+	for _, b := range list {
+		switch b.Where {
+		case WhereDefault:
+			info.MainAhead, info.MainBehind = b.Push, b.Pull
+		case WhereWIP:
+			wip++
+		case WhereLocalOnly:
+			local++
+			if b.Gone {
+				gone++
+			}
+		case WhereRemoteOnly:
+			remote++
+		}
+	}
+	info.WIP, info.LocalOnly, info.Gone, info.RemoteOnly = strconv.Itoa(wip), strconv.Itoa(local), strconv.Itoa(gone), strconv.Itoa(remote)
 	return info
 }
 
-// BranchInfo is one local branch's drift: the same columns as Info minus the
-// working tree, which belongs to HEAD only.
-type BranchInfo struct {
-	Name     string
-	Ahead    string
-	Behind   string
-	Unmerged string
+// Where is where a branch exists.
+type Where int
+
+const (
+	WhereDefault    Where = iota // the default branch (origin/HEAD), wherever it is
+	WhereWIP                     // both locally and on origin
+	WhereLocalOnly               // only locally
+	WhereRemoteOnly              // only on origin
+)
+
+// String is the name the table and the JSON output use.
+func (w Where) String() string {
+	switch w {
+	case WhereDefault:
+		return "default"
+	case WhereWIP:
+		return "wip"
+	case WhereLocalOnly:
+		return "local-only"
+	default:
+		return "remote-only"
+	}
 }
 
-// Branches lists the local branches other than the checked-out one, with the
-// same drift reads as Collect. It never fetches; the tracking refs are read
-// as they are.
-func Branches(path string) []BranchInfo {
-	refs, err := git(path, "for-each-ref", "refs/heads", "--format=%(HEAD)\t%(refname:short)")
-	if err != nil || refs == "" {
-		return nil
+// BranchInfo is one branch, local or on origin.
+type BranchInfo struct {
+	Name    string
+	Where   Where
+	Current bool
+	// Gone: a local-only branch whose upstream was deleted on the remote
+	Gone bool
+	// Push / Pull compare the local branch with origin/<same name>: commits
+	// not pushed / not pulled. Dash when either side is missing
+	Push string
+	Pull string
+	// LastCommit is the committer date (YYYY-MM-DD) of the local branch, or
+	// of the remote one when there is no local branch
+	LastCommit string
+}
+
+// Branches lists the local and origin branches, matched by name, the default
+// branch first and the rest by name. It never fetches; the tracking refs are
+// read as they are.
+func Branches(path, base, current string) ([]BranchInfo, error) {
+	locals, err := git(path, "for-each-ref", "refs/heads", "--format=%(refname:short)\t%(upstream:track)\t%(committerdate:short)")
+	if err != nil {
+		return nil, err
 	}
-	base, _ := git(path, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+	remotes, err := git(path, "for-each-ref", "refs/remotes/origin", "--format=%(refname:lstrip=3)\t%(committerdate:short)")
+	if err != nil {
+		return nil, err
+	}
+
+	type local struct{ track, date string }
+	byName := map[string]local{}
+	for _, line := range lines(locals) {
+		f := strings.SplitN(line, "\t", 3)
+		if len(f) == 3 {
+			byName[f[0]] = local{track: f[1], date: f[2]}
+		}
+	}
+	onOrigin := map[string]string{}
+	for _, line := range lines(remotes) {
+		name, date, ok := strings.Cut(line, "\t")
+		// origin/HEAD is a pointer to the default branch, not a branch
+		if ok && name != "HEAD" {
+			onOrigin[name] = date
+		}
+	}
 
 	var out []BranchInfo
-	for _, line := range strings.Split(refs, "\n") {
-		marker, name, ok := strings.Cut(line, "\t")
-		if !ok || marker == "*" || name == "" {
-			continue
+	add := func(name string) {
+		l, isLocal := byName[name]
+		rdate, isRemote := onOrigin[name]
+		b := BranchInfo{Name: name, Current: name == current, Push: Dash, Pull: Dash, LastCommit: l.date}
+		switch {
+		case name == base:
+			b.Where = WhereDefault
+		case isLocal && isRemote:
+			b.Where = WhereWIP
+		case isLocal:
+			b.Where = WhereLocalOnly
+			b.Gone = strings.Contains(l.track, "gone")
+		default:
+			b.Where = WhereRemoteOnly
 		}
-		b := BranchInfo{Name: name, Ahead: Dash, Behind: Dash, Unmerged: Dash}
-		if counts, err := git(path, "rev-list", "--left-right", "--count", name+"@{upstream}..."+name); err == nil {
-			if f := strings.Fields(counts); len(f) >= 2 {
-				b.Behind, b.Ahead = f[0], f[1]
-			}
+		if !isLocal {
+			b.LastCommit = rdate
 		}
-		if base != "" {
-			if n, err := git(path, "rev-list", "--count", base+".."+name); err == nil {
-				b.Unmerged = n
+		if isLocal && isRemote {
+			if counts, err := git(path, "rev-list", "--left-right", "--count", "refs/heads/"+name+"...refs/remotes/origin/"+name); err == nil {
+				if f := strings.Fields(counts); len(f) >= 2 {
+					b.Push, b.Pull = f[0], f[1]
+				}
 			}
 		}
 		out = append(out, b)
 	}
-	return out
+	seen := map[string]bool{}
+	for name := range byName {
+		seen[name] = true
+	}
+	for name := range onOrigin {
+		seen[name] = true
+	}
+	for name := range seen {
+		add(name)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if (out[i].Where == WhereDefault) != (out[j].Where == WhereDefault) {
+			return out[i].Where == WhereDefault
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
+}
+
+func lines(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, "\n")
 }
 
 // ShortHead caps a branch name for display, the same cut Collect applies to
