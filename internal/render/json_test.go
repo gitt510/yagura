@@ -17,14 +17,6 @@ func TestJSONEmptyListsAreArrays(t *testing.T) {
 			t.Errorf("missing %s in:\n%s", want, buf.String())
 		}
 	}
-
-	buf.Reset()
-	if err := SessionsJSON(&buf, nil, nil); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(buf.String(), `"sessions": []`) {
-		t.Errorf("missing empty sessions in:\n%s", buf.String())
-	}
 }
 
 // An unset count is null, and a zero count is 0 — the two must not collapse.

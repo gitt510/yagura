@@ -5,24 +5,10 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/gitt510/yagura/internal/discover"
 	"github.com/gitt510/yagura/internal/gitinfo"
 )
-
-// The auto-refresh interval is per view. Running repos at the procs rate would
-// fire git fetch across every repo far too often.
-func TestIntervalPerView(t *testing.T) {
-	m := newModel(Options{SessionsInterval: 10 * time.Second, ReposInterval: time.Minute})
-	if got := m.interval(); got != time.Minute {
-		t.Errorf("repos の interval = %s, want 1m", got)
-	}
-	m.view = viewSessions
-	if got := m.interval(); got != 10*time.Second {
-		t.Errorf("sessions の interval = %s, want 10s", got)
-	}
-}
 
 // Dropping zero units could turn "10s" into "1", so pin down the boundaries.
 func TestFormatInterval(t *testing.T) {
@@ -62,14 +48,6 @@ func TestSpliceLine(t *testing.T) {
 	}
 	if got := spliceLine("", "XXX", 0, 3); got != "XXX" {
 		t.Errorf("空 base = %q, want XXX", got)
-	}
-}
-
-// The contract of gradientLine: painting in segments never drops a character.
-func TestGradientLine(t *testing.T) {
-	plain := []lipgloss.Style{{}, {}, {}}
-	if got := gradientLine("abcdefg", plain); got != "abcdefg" {
-		t.Errorf("gradientLine = %q, want abcdefg", got)
 	}
 }
 

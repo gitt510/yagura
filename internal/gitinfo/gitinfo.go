@@ -90,39 +90,6 @@ func CollectAll(paths []string, limit int) []Info {
 	return infos
 }
 
-// ForDirs collects only the dirs that sit inside a work tree and returns
-// dir -> Info. Dirs that aren't repos (including missing ones) are omitted.
-// A session's cwd can be a subdirectory of the repo, so ask git itself
-// where it is rather than looking for .git.
-func ForDirs(dirs []string, limit int) map[string]Info {
-	uniq := make([]string, 0, len(dirs))
-	seen := map[string]bool{}
-	for _, d := range dirs {
-		if d != "" && !seen[d] {
-			seen[d] = true
-			uniq = append(uniq, d)
-		}
-	}
-
-	var mu sync.Mutex
-	out := make(map[string]Info, len(uniq))
-	each(uniq, limit, func(p string) {
-		if !inWorkTree(p) {
-			return
-		}
-		info := Collect(p)
-		mu.Lock()
-		out[p] = info
-		mu.Unlock()
-	})
-	return out
-}
-
-func inWorkTree(path string) bool {
-	out, err := git(path, "rev-parse", "--is-inside-work-tree")
-	return err == nil && out == "true"
-}
-
 // Collect reads the drift for a single repo.
 func Collect(path string) Info {
 	info := Info{Changed: "0", MainAhead: Dash, MainBehind: Dash, WIP: Dash, LocalOnly: Dash, Gone: Dash, RemoteOnly: Dash}

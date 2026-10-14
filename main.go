@@ -1,5 +1,5 @@
-// yagura is a local lookout. It tabulates the sessions of running agent
-// CLIs and the drift of the repos under the declared roots.
+// yagura is a local lookout. It tabulates the drift of the repos under the
+// declared roots.
 package main
 
 import (
@@ -13,7 +13,6 @@ import (
 	"github.com/gitt510/yagura/internal/config"
 	"github.com/gitt510/yagura/internal/discover"
 	"github.com/gitt510/yagura/internal/gitinfo"
-	"github.com/gitt510/yagura/internal/procs"
 	"github.com/gitt510/yagura/internal/render"
 	"github.com/gitt510/yagura/internal/rows"
 	"github.com/gitt510/yagura/internal/ui"
@@ -22,15 +21,14 @@ import (
 // concurrency is how many repos are fetched / inspected at once.
 const concurrency = 12
 
-const usage = `usage: yagura [query] [--root <dir>]... [--sessions] [-n|--no-fetch] [--plain|--json] [--interval <dur>]
+const usage = `usage: yagura [query] [--root <dir>]... [-n|--no-fetch] [--plain|--json] [--interval <dur>]
 
-  query           filter repos by substring match on path (repos view only)
+  query           filter repos by substring match on path
       --root      root to watch; repeatable; overrides the config file
-      --sessions  start on the sessions view instead of repos
   -n, --no-fetch  skip fetch and report from recorded remote-tracking refs
       --plain     print the table once without the TUI (auto on non-TTY)
       --json      print the same facts once as JSON, counts as numbers
-      --interval  refresh interval of the repos view for this run (overrides config)
+      --interval  refresh interval for this run (overrides config)
   -h, --help      print this usage and exit
 `
 
@@ -73,14 +71,6 @@ func run() int {
 		cfg.Repos.Interval = config.Duration(opts.interval)
 	}
 
-	// the sessions view is not tied to the repo declaration (no root or query)
-	if opts.withSessions && (opts.json || opts.plain || !isTTY()) {
-		if opts.json {
-			return jsonSessions(cfg.Sessions.Commands)
-		}
-		return plainSessions(cfg.Sessions.Commands)
-	}
-
 	roots := opts.roots
 	if len(roots) == 0 {
 		// any --root discards the config file roots (a one-off override)
@@ -88,30 +78,23 @@ func run() int {
 	}
 
 	repos, warnings := discover.Repos(roots, opts.query)
-	reposNote := ""
-	if len(repos) == 0 {
-		reposNote = "no repos match: " + opts.query
-		if len(roots) == 0 {
-			reposNote = "no roots declared: create " + config.Path()
-		}
 
-		// nothing to show at the default entry (repos view): guide and exit, no TUI
-		if !opts.withSessions {
-			// with roots declared, an empty set is an answer, not a failure:
-			// --json says so in the document rather than in an exit code
-			if opts.json && len(roots) > 0 {
-				return jsonRepos(nil, append(warnings, reposNote), opts)
-			}
-			for _, w := range warnings {
-				fmt.Fprintln(os.Stderr, w)
-			}
-			if len(roots) == 0 {
-				fmt.Fprint(os.Stderr, setupMessage())
-			} else {
-				fmt.Fprintf(os.Stderr, "no repos match: %s\n", opts.query)
-			}
-			return 1
+	// nothing to show: guide and exit, no TUI
+	if len(repos) == 0 {
+		// with roots declared, an empty set is an answer, not a failure:
+		// --json says so in the document rather than in an exit code
+		if opts.json && len(roots) > 0 {
+			return jsonRepos(nil, append(warnings, "no repos match: "+opts.query), opts)
 		}
+		for _, w := range warnings {
+			fmt.Fprintln(os.Stderr, w)
+		}
+		if len(roots) == 0 {
+			fmt.Fprint(os.Stderr, setupMessage())
+		} else {
+			fmt.Fprintf(os.Stderr, "no repos match: %s\n", opts.query)
+		}
+		return 1
 	}
 
 	if opts.json {
@@ -122,43 +105,15 @@ func run() int {
 	}
 
 	err = ui.Run(ui.Options{
-		Repos:            repos,
-		TmuxSession:      cfg.Repos.TmuxSession,
-		Commands:         cfg.Sessions.Commands,
-		SessionsInterval: time.Duration(cfg.Sessions.Interval),
-		ReposInterval:    time.Duration(cfg.Repos.Interval),
-		Roots:            len(roots),
-		Warnings:         warnings,
-		ReposNote:        reposNote,
-		NoFetch:          opts.noFetch,
-		WithSessions:     opts.withSessions,
-		Color:            !noColor(),
+		Repos:       repos,
+		TmuxSession: cfg.Repos.TmuxSession,
+		Interval:    time.Duration(cfg.Repos.Interval),
+		Roots:       len(roots),
+		Warnings:    warnings,
+		NoFetch:     opts.noFetch,
+		Color:       !noColor(),
 	})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	return 0
-}
-
-func plainSessions(commands []string) int {
-	ps := procs.List(commands)
-	git := gitinfo.ForDirs(rows.CWDs(ps), concurrency)
-	useColor := isTTY() && !noColor()
-
-	home, _ := os.UserHomeDir()
-	render.SessionTable(os.Stdout, rows.Sessions(ps, home, git), useColor)
-	if len(ps) == 0 {
-		render.Notice(os.Stdout, "no sessions running", useColor)
-	}
-	return 0
-}
-
-func jsonSessions(commands []string) int {
-	ps := procs.List(commands)
-	git := gitinfo.ForDirs(rows.CWDs(ps), concurrency)
-
-	if err := render.SessionsJSON(os.Stdout, rows.SessionRecords(ps, git), nil); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
@@ -230,14 +185,13 @@ func plain(repos []discover.Repo, warnings []string, opts options) int {
 }
 
 type options struct {
-	help         bool
-	query        string
-	roots        []string
-	noFetch      bool
-	withSessions bool
-	plain        bool
-	json         bool
-	interval     time.Duration
+	help     bool
+	query    string
+	roots    []string
+	noFetch  bool
+	plain    bool
+	json     bool
+	interval time.Duration
 }
 
 func parseArgs(args []string) (options, error) {
@@ -263,8 +217,6 @@ func parseArgs(args []string) (options, error) {
 			opts.noFetch = true
 		case a == "-h" || a == "--help":
 			opts.help = true
-		case a == "--sessions":
-			opts.withSessions = true
 		case a == "--plain":
 			opts.plain = true
 		case a == "--json":
