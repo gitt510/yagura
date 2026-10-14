@@ -1,5 +1,5 @@
 // Package config reads the config file (TOML). The Config struct is the
-// source of truth, split into one table per feature (repos / procs). To add
+// source of truth, split into one table per feature. To add
 // a field, add it here with a toml tag and add an example to
 // config.example.toml. A test guarantees the example decodes into the
 // source of truth.
@@ -20,37 +20,22 @@ import (
 
 // Config is the source of truth. Table name = feature name.
 type Config struct {
-	Repos    Repos    `toml:"repos"`
-	Sessions Sessions `toml:"sessions"`
+	Repos Repos `toml:"repos"`
 }
 
 // Repos configures the repos view (drift).
 type Repos struct {
 	Roots []string `toml:"roots"`
-	// Interval is the auto-refresh interval. It fetches, so the default is
-	// slower than procs
+	// Interval is the auto-refresh interval. Every refresh fetches, so it is
+	// measured in minutes
 	Interval Duration `toml:"interval"`
 	// TmuxSession is the tmux session that o opens repos into. Empty
 	// keeps o inert; tmux is required only when this is used
 	TmuxSession string `toml:"tmux-session"`
 }
 
-// Sessions configures the sessions view.
-type Sessions struct {
-	// Commands are the process names to watch, matched against the
-	// basename of comm
-	Commands []string `toml:"commands"`
-	// Interval is the auto-refresh interval. Collection is cheap (no fetch),
-	// so the default is fast
-	Interval Duration `toml:"interval"`
-}
-
 // Defaults for anything left undeclared. Every behavioral default lives here.
-var (
-	defaultCommands         = []string{"claude"}
-	defaultReposInterval    = Duration(time.Minute)
-	defaultSessionsInterval = Duration(10 * time.Second)
-)
+var defaultReposInterval = Duration(time.Minute)
 
 // Duration reads a TOML string ("30s" / "1m") as a time.Duration.
 type Duration time.Duration
@@ -104,14 +89,8 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("%s: unknown key %q", Path(), undec[0].String())
 		}
 	}
-	if len(c.Sessions.Commands) == 0 {
-		c.Sessions.Commands = defaultCommands
-	}
 	if c.Repos.Interval == 0 {
 		c.Repos.Interval = defaultReposInterval
-	}
-	if c.Sessions.Interval == 0 {
-		c.Sessions.Interval = defaultSessionsInterval
 	}
 	return c, nil
 }

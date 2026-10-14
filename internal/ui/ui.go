@@ -15,25 +15,18 @@ import (
 
 	"github.com/gitt510/yagura/internal/discover"
 	"github.com/gitt510/yagura/internal/gitinfo"
-	"github.com/gitt510/yagura/internal/render"
 	"github.com/gitt510/yagura/internal/rows"
 )
 
 // Options is the startup configuration.
 type Options struct {
-	Repos        []discover.Repo
-	TmuxSession  string   // tmux session that o opens repos into, from config repos.tmux-session
-	Commands     []string // Process names to watch, from config sessions.commands
-	Roots        int      // Number of declared roots, shown in the bar
-	Warnings     []string // discover warnings, kept in the repos view footer
-	ReposNote    string   // Hint when there are no repos (no root declared / query mismatch)
-	NoFetch      bool
-	WithSessions bool // Start on the sessions view (repos by default)
-	// The auto-refresh interval is per view; procs involves no fetch, so it can
-	// run faster
-	SessionsInterval time.Duration
-	ReposInterval    time.Duration
-	Color            bool
+	Repos       []discover.Repo
+	TmuxSession string   // tmux session that o opens repos into, from config repos.tmux-session
+	Roots       int      // Number of declared roots, shown in the bar
+	Warnings    []string // discover warnings, kept in the footer
+	NoFetch     bool
+	Interval    time.Duration // Auto-refresh interval
+	Color       bool
 }
 
 // Run starts the TUI and blocks until it exits.
@@ -49,16 +42,6 @@ const concurrency = 12
 // sem keeps tea.Batch from spawning a goroutine per repo all at once.
 var sem = make(chan struct{}, concurrency)
 
-// view is the screen being displayed. repos is the default entry point, and
-// the tabs are ordered the same way.
-type view int
-
-const (
-	viewRepos view = iota
-	viewSessions
-	viewCount
-)
-
 type repoResultMsg struct {
 	gen      int
 	index    int
@@ -66,13 +49,11 @@ type repoResultMsg struct {
 	fetchErr bool
 }
 
-// tickMsg signals an auto-refresh. gen is the armTimer generation, so a
-// leftover timer that fires after a view switch changed the interval can be
-// discarded.
-type tickMsg struct{ gen int }
+// tickMsg signals an auto-refresh.
+type tickMsg struct{}
 
-// pane is one screen's table plus the position within it, so moving back and
-// forth between views does not lose the position.
+// pane is one screen's table plus the position within it, so stepping into a
+// repo's branches and back does not lose the position.
 type pane struct {
 	tbl    table
 	cursor int
@@ -83,35 +64,28 @@ type model struct {
 	opts Options
 	th   theme
 
-	view     view
-	sessions pane
-	repos    pane
+	repos pane
 	// branches is the branch list of the repo opened with enter; open is that
 	// repo's index, -1 while the repos table is shown
 	branches pane
 	open     int
 
-	infos    []gitinfo.Info
-	procList []render.SessionRow
+	infos []gitinfo.Info
 
 	// The last o (open in tmux) outcome, shown in the footer until the
 	// next refresh
 	openMsg string
 	openErr bool
-	// loaded records whether each view has collected at least once, so switching
-	// to a view never leaves it empty
-	loaded [viewCount]bool
+	// loaded records whether a refresh has completed at least once
+	loaded bool
 
-	failed []string // repos side: repos whose fetch failed
+	failed []string // Repos whose fetch failed
 
 	showHelp bool // Whether the help float is shown
 
-	// Refresh state is per view, so a slow repos fetch never holds up the
-	// sessions collection
-	gens        [viewCount]int // Refresh generation, used to discard stale results
-	refreshing  [viewCount]bool
-	timerGen    int // Timer generation, discards the old timer replaced on a view switch
-	pending     int // repos side: number of repos not yet reported
+	gen         int // Refresh generation, used to discard stale results
+	refreshing  bool
+	pending     int // Number of repos not yet reported
 	lastRefresh time.Time
 	spinner     spinner.Model
 
@@ -135,9 +109,6 @@ func newModel(opts Options) *model {
 		open:    -1,
 		spinner: sp,
 	}
-	if opts.WithSessions {
-		m.view = viewSessions
-	}
 	m.rebuild()
 	return m
 }
@@ -147,37 +118,21 @@ func (m *model) Init() tea.Cmd {
 }
 
 func (m *model) armTimer() tea.Cmd {
-	m.timerGen++
-	gen := m.timerGen
-	return tea.Every(m.interval(), func(time.Time) tea.Msg { return tickMsg{gen: gen} })
+	return tea.Every(m.opts.Interval, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
-// interval is the auto-refresh interval of the current view.
-func (m *model) interval() time.Duration {
-	if m.view == viewSessions {
-		return m.opts.SessionsInterval
-	}
-	return m.opts.ReposInterval
-}
-
-// startRefresh re-collects only for the view being shown; the background view
-// is left alone.
+// startRefresh re-collects every repo, unless a refresh is already running.
 func (m *model) startRefresh() tea.Cmd {
-	v := m.view
-	if m.refreshing[v] {
+	if m.refreshing {
 		return nil
 	}
-	m.gens[v]++
-	m.refreshing[v] = true
+	m.gen++
+	m.refreshing = true
 	m.openMsg, m.openErr = "", false
 
-	if v == viewSessions {
-		return tea.Batch(m.spinner.Tick, sessionsCmd(m.gens[v], m.opts.Commands))
-	}
-
 	if len(m.opts.Repos) == 0 {
-		m.refreshing[v] = false
-		m.loaded[viewRepos] = true
+		m.refreshing = false
+		m.loaded = true
 		return nil
 	}
 	m.pending = len(m.opts.Repos)
@@ -186,7 +141,7 @@ func (m *model) startRefresh() tea.Cmd {
 	cmds := make([]tea.Cmd, 0, len(m.opts.Repos)+1)
 	cmds = append(cmds, m.spinner.Tick)
 	for i, r := range m.opts.Repos {
-		cmds = append(cmds, collectCmd(m.gens[v], i, r.Path, m.opts.NoFetch))
+		cmds = append(cmds, collectCmd(m.gen, i, r.Path, m.opts.NoFetch))
 	}
 	return tea.Batch(cmds...)
 }
@@ -264,15 +219,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		// Drop ticks from an old timer generation and ticks that fire mid-refresh
-		// (never run refreshes on top of each other)
-		if msg.gen != m.timerGen {
-			return m, nil
-		}
+		// startRefresh drops a tick that fires mid-refresh (never run refreshes
+		// on top of each other)
 		return m, tea.Batch(m.startRefresh(), m.armTimer())
 
 	case repoResultMsg:
-		if msg.gen != m.gens[viewRepos] {
+		if msg.gen != m.gen {
 			return m, nil
 		}
 		m.infos[msg.index] = msg.info
@@ -282,7 +234,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pending--
 		m.rebuild()
 		if m.pending == 0 {
-			m.finish(viewRepos)
+			m.finish()
 		}
 		return m, nil
 
@@ -293,17 +245,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case sessionsResultMsg:
-		if msg.gen != m.gens[viewSessions] {
-			return m, nil
-		}
-		m.procList = msg.list
-		m.finish(viewSessions)
-		m.rebuild()
-		return m, nil
-
 	case spinner.TickMsg:
-		if !m.refreshing[viewRepos] && !m.refreshing[viewSessions] {
+		if !m.refreshing {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -357,17 +300,6 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "o":
 		return m, m.openRepo()
 
-	case "p":
-		m.view = (m.view + 1) % viewCount
-		m.rebuild()
-		// Switch the timer to the new view's interval, and collect right away for a
-		// view visited for the first time
-		cmds := []tea.Cmd{m.armTimer()}
-		if !m.loaded[m.view] {
-			cmds = append(cmds, m.startRefresh())
-		}
-		return m, tea.Batch(cmds...)
-
 	case "j", "down":
 		m.move(1)
 	case "k", "up":
@@ -389,11 +321,11 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // inBranches reports whether a repo's branch list is on screen.
-func (m *model) inBranches() bool { return m.view == viewRepos && m.open >= 0 }
+func (m *model) inBranches() bool { return m.open >= 0 }
 
 // openBranches opens the focused repo's branch list.
 func (m *model) openBranches() {
-	if m.view != viewRepos || m.inBranches() {
+	if m.inBranches() {
 		return
 	}
 	idx, ok := m.focusedRepo()
@@ -408,9 +340,6 @@ func (m *model) openBranches() {
 // openRepo opens the focused repo (or the one whose branches are shown) in the
 // declared tmux session: the path from the lookout to the work site.
 func (m *model) openRepo() tea.Cmd {
-	if m.view != viewRepos {
-		return nil
-	}
 	idx, ok := m.focusedRepo()
 	if m.inBranches() {
 		idx, ok = m.open, true
@@ -440,27 +369,22 @@ func (m *model) focusedRepo() (int, bool) {
 	return l.ref, true
 }
 
-func (m *model) finish(v view) {
-	m.refreshing[v] = false
-	m.loaded[v] = true
+func (m *model) finish() {
+	m.refreshing = false
+	m.loaded = true
 	m.lastRefresh = time.Now()
 }
 
 func (m *model) pane() *pane {
-	switch {
-	case m.inBranches():
+	if m.inBranches() {
 		return &m.branches
-	case m.view == viewRepos:
-		return &m.repos
-	default:
-		return &m.sessions
 	}
+	return &m.repos
 }
 
 // rebuild rebuilds the tables. Not called on cursor movement (only when the
 // data or the window changed).
 func (m *model) rebuild() {
-	m.sessions.tbl = buildSessionTable(m.procList, m.th)
 	rs := rows.Build(m.opts.Repos, m.infos)
 	m.repos.tbl = buildTable(rs, m.th)
 	if m.open >= 0 && m.open < len(rs) {
@@ -528,78 +452,14 @@ func (m *model) snapCursor(step int) {
 }
 
 // bodyHeight is the number of lines available for the tables, excluding the
-// header and the footer (rule + notices + status bar). Column headings live
+// footer (rule + notices + status bar). Column headings live
 // inside each table's border.
 func (m *model) bodyHeight() int {
-	h := m.height - len(m.headerLines()) - 2 - len(m.noticeLines())
+	h := m.height - 2 - len(m.noticeLines())
 	if h < 1 {
 		h = 1
 	}
 	return h
-}
-
-// logoLines is the wordmark, generated once with toilet (pagga) and stripped
-// of its shading. Not worth a runtime-generation library, so it is baked in as
-// a constant.
-var logoLines = []string{
-	" █ █ █▀█ █▀▀ █ █ █▀▄ █▀█",
-	"  █  █▀█ █ █ █ █ █▀▄ █▀█",
-	"  ▀  ▀ ▀ ▀▀▀ ▀▀▀ ▀ ▀ ▀ ▀",
-}
-
-// gradientLine splits line into as many equal parts as the ramp has steps and
-// paints them from left to right.
-func gradientLine(line string, ramp []lipgloss.Style) string {
-	runes := []rune(line)
-	per := (len(runes) + len(ramp) - 1) / len(ramp)
-	var b strings.Builder
-	for i, st := range ramp {
-		lo := min(i*per, len(runes))
-		hi := min(lo+per, len(runes))
-		b.WriteString(st.Render(string(runes[lo:hi])))
-	}
-	return b.String()
-}
-
-// headerLines lays out the tab line and the logo, seating them on the board
-// with a rule. The tabs are bottom-aligned to the logo's last line. The logo is
-// decoration, so on a terminal too narrow for it, it quietly disappears and
-// only the tab line remains.
-func (m *model) headerLines() []string {
-	tabs := m.tabLine()
-	rule := m.th.border.Render(strings.Repeat(barH, m.width))
-
-	logoW := lipgloss.Width(logoLines[0])
-	if m.width < lipgloss.Width(tabs)+logoW+4 {
-		return []string{clip(tabs, m.width), rule}
-	}
-
-	lines := make([]string, 0, len(logoLines)+1)
-	for i, l := range logoLines {
-		left := ""
-		if i == len(logoLines)-1 {
-			left = tabs
-		}
-		fill := m.width - lipgloss.Width(left) - lipgloss.Width(l) - 1
-		lines = append(lines, left+strings.Repeat(" ", fill)+gradientLine(l, m.th.logoRamp))
-	}
-	return append(lines, rule)
-}
-
-// tabLine lists the views (fixed feature names). The current one is bold, the
-// rest are dim. Which command a session belongs to is carried per row by the
-// table's CMD column.
-func (m *model) tabLine() string {
-	repos := "repos"
-	sessions := "sessions"
-	if m.view == viewSessions {
-		sessions = m.th.group.Render(sessions)
-		repos = m.th.dim.Render(repos)
-	} else {
-		sessions = m.th.dim.Render(sessions)
-		repos = m.th.group.Render(repos)
-	}
-	return indent + repos + m.th.dim.Render(" │ ") + sessions
 }
 
 // clampView moves the offset until the cursor is visible.
@@ -653,7 +513,7 @@ func (m *model) View() string {
 		m.overlayHelp(body, h)
 	}
 
-	out := append(m.headerLines(), body...)
+	out := body
 
 	// Seat the footer on the board with a rule
 	out = append(out, m.th.border.Render(strings.Repeat(barH, m.width)))
@@ -670,10 +530,9 @@ var helpRows = []struct{ key, desc string }{
 	{"wheel", "move"},
 	{"g / G", "top / bottom"},
 	{"ctrl+d / u", "half page"},
-	{"enter / l", "show branches (repos)"},
-	{"esc / h", "back to repos (branches)"},
-	{"o", "open in tmux (repos)"},
-	{"p", "switch view"},
+	{"enter / l", "show branches"},
+	{"esc / h", "back to repos"},
+	{"o", "open in tmux"},
 	{"r", "refresh now"},
 	{"?", "toggle help"},
 	{"q / esc", "quit (esc: from repos)"},
@@ -751,23 +610,11 @@ func (m *model) noticeLine(st lipgloss.Style, tag, s string) string {
 	return clip(st.Render(pad(indent+tag, stateW, false))+sep+st.Render(s), m.width)
 }
 
-// noticeLines are the per-view annotations. Root-related warnings appear only
-// in the repos view, so the sessions view stays quiet even without a root.
+// noticeLines are the annotations above the status bar.
 func (m *model) noticeLines() []string {
 	var lines []string
-
-	if m.view == viewSessions {
-		if m.loaded[viewSessions] && len(m.procList) == 0 {
-			lines = append(lines, m.noticeLine(m.th.note, "note", "no sessions running"))
-		}
-		return lines
-	}
-
 	for _, w := range m.opts.Warnings {
 		lines = append(lines, m.noticeLine(m.th.warnNote, "warn", w))
-	}
-	if len(m.opts.Repos) == 0 && m.opts.ReposNote != "" {
-		lines = append(lines, m.noticeLine(m.th.note, "note", m.opts.ReposNote))
 	}
 	if len(m.failed) > 0 {
 		lines = append(lines, m.noticeLine(m.th.warnNote, "warn",
@@ -798,7 +645,7 @@ func (m *model) statusBar() string {
 	// While refreshing, show only the spinner where idle sits; the slot width is
 	// fixed, so nothing to the left shifts
 	state := m.th.bar.Render(pad(" idle", stateW, false))
-	if m.refreshing[m.view] {
+	if m.refreshing {
 		state = m.th.barOn.Render(pad(" "+m.spinner.View(), stateW, false))
 	}
 
@@ -807,22 +654,17 @@ func (m *model) statusBar() string {
 		last = m.lastRefresh.Format("15:04:05")
 	}
 
-	// No segment for the view name; the unit of the count (session / repo) says
-	// which view this is
-	count := countLabel(len(m.procList), "session")
-	if m.view == viewRepos {
-		count = countLabel(len(m.opts.Repos), "repo") + " · " + countLabel(m.opts.Roots, "root")
-		if m.loaded[viewRepos] {
-			count += " · " + strconv.Itoa(m.cleanCount()) + " clean"
-		}
+	count := countLabel(len(m.opts.Repos), "repo") + " · " + countLabel(m.opts.Roots, "root")
+	if m.loaded {
+		count += " · " + strconv.Itoa(m.cleanCount()) + " clean"
 	}
 
 	sep := m.th.hint.Render(" │ ")
 	left := state + sep +
 		m.th.bar.Render("last "+last) + sep +
-		m.th.bar.Render("every "+formatInterval(m.interval())) + sep +
+		m.th.bar.Render("every "+formatInterval(m.opts.Interval)) + sep +
 		m.th.bar.Render(count)
-	if m.view == viewRepos && m.opts.NoFetch {
+	if m.opts.NoFetch {
 		left += sep + m.th.bar.Render("no-fetch")
 	}
 

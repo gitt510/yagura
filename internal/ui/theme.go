@@ -4,7 +4,7 @@ import "github.com/charmbracelet/lipgloss"
 
 // The meaning of the colors matches the plain output.
 // yellow = local changes to act on / red = gaps against the remote (ahead / behind) / cyan = unmerged commits (informational)
-// green = running session / red = detached / dim = 0, -, and idle
+// red = detached / dim = 0, -, and idle
 // Every color is an ANSI-16 slot number only (so it follows the terminal
 // theme). The footer gets no band (background) — ANSI slot 0 is not the same as
 // the terminal's default background and drifts from it depending on the theme.
@@ -35,12 +35,7 @@ type theme struct {
 	group      lipgloss.Style
 	groupCount lipgloss.Style
 
-	box lipgloss.Style // Border of floats such as help
-	// logoRamp is the wordmark's stepped gradient (painted left to right). Pure
-	// decoration. A smooth gradient would need truecolor, so it is approximated
-	// with a brightness staircase of ANSI-16 slots
-	logoRamp []lipgloss.Style
-
+	box      lipgloss.Style // Border of floats such as help
 	bar      lipgloss.Style
 	barOn    lipgloss.Style
 	hint     lipgloss.Style
@@ -64,7 +59,6 @@ func newTheme(color bool) theme {
 		group:      plain.Bold(true),
 		groupCount: plain,
 		box:        plain.Border(lipgloss.RoundedBorder()).Padding(0, 2),
-		logoRamp:   []lipgloss.Style{plain.Bold(true)},
 		bar:        plain,
 		barOn:      plain.Bold(true),
 		hint:       plain,
@@ -83,20 +77,13 @@ func newTheme(color bool) theme {
 	th.local = plain.Foreground(lipgloss.Color(colLocal)).Bold(true)
 	th.danger = plain.Foreground(lipgloss.Color(colNG)).Bold(true)
 	th.remote = plain.Foreground(lipgloss.Color(colRemote)).Bold(true)
-	// Branch names stand out in the brand primary (the same blue as the logo).
+	// Branch names stand out in the brand primary (bright blue).
 	// The functional colors (yellow/cyan/green/red) are already taken by meanings
 	th.headOn = plain.Foreground(lipgloss.Color("12")).Bold(true)
 	th.headOff = plain.Foreground(lipgloss.Color(colNG)).Bold(true)
 
 	th.border = th.dim
 	th.box = th.box.BorderForeground(lipgloss.Color(colDim))
-	// blue → bright blue → cyan → bright cyan; all ANSI-16 slots
-	th.logoRamp = []lipgloss.Style{
-		plain.Foreground(lipgloss.Color("4")).Bold(true),
-		plain.Foreground(lipgloss.Color("12")).Bold(true),
-		plain.Foreground(lipgloss.Color("6")).Bold(true),
-		plain.Foreground(lipgloss.Color("14")).Bold(true),
-	}
 
 	th.bar = plain.Foreground(lipgloss.Color(colBarFG))
 	// The spinner during a refresh is not "needs action" but activity = an active

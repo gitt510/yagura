@@ -52,42 +52,14 @@ type BranchRecord struct {
 	LastCommit *string `json:"last_commit"`
 }
 
-// SessionRecord is one running agent CLI session.
-type SessionRecord struct {
-	Command string `json:"command"`
-	PID     int    `json:"pid"`
-	CWD     string `json:"cwd"`
-
-	// Branch / Changed are null when cwd is not inside a work tree.
-	Branch    *string `json:"branch"`
-	HeadState string  `json:"head_state"`
-	Changed   *int    `json:"changed"`
-
-	// Tmux is session:window.pane, null outside a pane.
-	Tmux    *string  `json:"tmux"`
-	Elapsed string   `json:"elapsed"`
-	CPUPct  *float64 `json:"cpu_pct"`
-	RSSKB   int      `json:"rss_kb"`
-}
-
 type reposDoc struct {
 	Repos    []RepoRecord `json:"repos"`
 	Warnings []string     `json:"warnings"`
 }
 
-type sessionsDoc struct {
-	Sessions []SessionRecord `json:"sessions"`
-	Warnings []string        `json:"warnings"`
-}
-
 // ReposJSON writes the drift document.
 func ReposJSON(w io.Writer, repos []RepoRecord, warnings []string) error {
 	return encode(w, reposDoc{Repos: nonNil(repos), Warnings: nonNil(warnings)})
-}
-
-// SessionsJSON writes the sessions document.
-func SessionsJSON(w io.Writer, sessions []SessionRecord, warnings []string) error {
-	return encode(w, sessionsDoc{Sessions: nonNil(sessions), Warnings: nonNil(warnings)})
 }
 
 func encode(w io.Writer, doc any) error {

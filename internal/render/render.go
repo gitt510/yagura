@@ -64,57 +64,6 @@ type BranchRow struct {
 	LastCommit string
 }
 
-// SessionRow is the display values for a single session, all preformatted
-// strings. Cmd is the table's group (which command it is). Branch / Changed
-// are filled in only when cwd was inside a repo, and arrive as - when outside.
-type SessionRow struct {
-	Cmd       string
-	CWD       string
-	Branch    string
-	HeadState HeadState
-	Changed   string
-	Tmux      string
-	PID       string
-	Elapsed   string
-	CPU       string
-	CPUPct    int
-	Mem       string
-}
-
-// meterWidth is the number of cells in the CPU meter.
-const meterWidth = 5
-
-// CPUMeter turns %cpu into a fixed-width bar. Even 1% lights one cell, to
-// show it is alive. Above 100% (multiple cores) it caps out full.
-func CPUMeter(pct int) string {
-	fill := (pct*meterWidth + 99) / 100
-	if fill < 0 {
-		fill = 0
-	}
-	if fill > meterWidth {
-		fill = meterWidth
-	}
-	return strings.Repeat("█", fill) + strings.Repeat("░", meterWidth-fill)
-}
-
-// SessionColumns is the column definition for the sessions view, shared by
-// plain and TUI. Cmd is emitted as a group heading rather than a column.
-var SessionColumns = []struct {
-	Header string
-	Right  bool
-	Value  func(SessionRow) string
-}{
-	{"CWD", false, func(r SessionRow) string { return r.CWD }},
-	{"BRANCH", false, func(r SessionRow) string { return r.Branch }},
-	{"CHANGED", true, func(r SessionRow) string { return r.Changed }},
-	{"TMUX", false, func(r SessionRow) string { return r.Tmux }},
-	{"PID", true, func(r SessionRow) string { return r.PID }},
-	{"ELAPSED", true, func(r SessionRow) string { return r.Elapsed }},
-	// Meter first, % second at a fixed width, so the meters line up even right-aligned
-	{"CPU", true, func(r SessionRow) string { return CPUMeter(r.CPUPct) + " " + padLeft(r.CPU, 4) }},
-	{"MEM", true, func(r SessionRow) string { return r.Mem }},
-}
-
 // Absent reports the values to mute: unreadable, not applicable, or not
 // collected yet. 0 is not absent — it is an observed fact that keeps its
 // character — but it shares the dim tone, so only movement carries color.
@@ -195,78 +144,6 @@ func Table(w io.Writer, rows []Row, useColor bool) {
 		}
 		fmt.Fprintf(w, "  %s  %s  %s\n", padRight(r.Repo, wrepo), padRight(r.Head, whead), strings.Join(cells, "  "))
 	}
-}
-
-// SessionTable writes the session table, repeating the heading and column
-// headers per group (command). Same grammar as Table for repos.
-func SessionTable(w io.Writer, rows []SessionRow, useColor bool) {
-	if len(rows) == 0 {
-		return
-	}
-	p := newPalette(useColor)
-
-	widths := make([]int, len(SessionColumns))
-	for i, c := range SessionColumns {
-		widths[i] = width(c.Header, rows, c.Value)
-	}
-
-	cells := make([]string, len(SessionColumns))
-	for i, c := range SessionColumns {
-		cells[i] = alignProc(c.Header, widths[i], c.Right)
-	}
-	head := "  " + strings.Join(cells, "  ")
-
-	group := ""
-	for i, r := range rows {
-		if r.Cmd != group {
-			group = r.Cmd
-			if i > 0 {
-				fmt.Fprintln(w)
-			}
-			fmt.Fprintf(w, "%s\n%s\n", group, head)
-		}
-		for i, c := range SessionColumns {
-			v := c.Value(r)
-			cells[i] = paint(alignProc(v, widths[i], c.Right), sessionTone(c.Header, r, v, p), p.off)
-		}
-		fmt.Fprintf(w, "  %s\n", strings.Join(cells, "  "))
-	}
-}
-
-// sessionTone is the coloring of the sessions view in plain output. CHANGED
-// gets the same "needs attention" yellow as drift. CPU makes no judgement; it
-// only mutes an idle 0%.
-func sessionTone(header string, r SessionRow, v string, p palette) string {
-	switch header {
-	case "CPU":
-		if r.CPU == "-" {
-			return p.dim
-		}
-		return ""
-	case "CHANGED":
-		if Absent(v) || v == "0" {
-			return p.dim
-		}
-		return p.yellow
-	default:
-		if Absent(v) {
-			return p.dim
-		}
-		return ""
-	}
-}
-
-func alignProc(v string, w int, right bool) string {
-	if right {
-		return padLeft(v, w)
-	}
-	return padRight(v, w)
-}
-
-// Notice writes a supplementary line (dim) that does not break the table.
-func Notice(w io.Writer, msg string, useColor bool) {
-	p := newPalette(useColor)
-	fmt.Fprintln(w, paint(msg, p.dim, p.off))
 }
 
 func newPalette(useColor bool) palette {
