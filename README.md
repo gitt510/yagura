@@ -17,6 +17,7 @@ roots.
 - Repos are grouped by declared root
 - A root that is itself a git repo is watched as one; otherwise its direct children are watched, without recursion
 - Columns: `HEAD`, `CHANGED` (working-tree changes), `MAIN` (`↑` unpushed / `↓` unpulled commits of the default branch against `origin`), `WIP` / `LOCAL-ONLY` / `REMOTE-ONLY` (branch counts)
+- `HEAD` is cut at 15 characters with `…`; the branch list shows the longer name
 - The default branch is the one `origin/HEAD` points at
 - Every other branch is counted in exactly one of `WIP` (local and on `origin`), `LOCAL-ONLY`, `REMOTE-ONLY`, matched by name
 - `LOCAL-ONLY` adds `· <n> gone` for branches whose upstream was deleted on the remote; a branch never pushed is not gone

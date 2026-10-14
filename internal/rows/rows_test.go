@@ -97,3 +97,12 @@ func TestBranches(t *testing.T) {
 		t.Errorf("after a failed fetch = %+v, %+v", got[0], got[1])
 	}
 }
+
+// The HEAD column is capped so a long branch name never pushes the counts
+// off a split pane.
+func TestOneHeadCap(t *testing.T) {
+	in := gitinfo.Info{Head: "refactor/phonetics-static-assets", Branch: "refactor/phonetics-static-assets", Base: "main"}
+	if got := One(discover.Repo{}, in).Head; got != "refactor/phone…" {
+		t.Errorf("Head = %q, want refactor/phone…", got)
+	}
+}
