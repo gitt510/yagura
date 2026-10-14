@@ -106,7 +106,7 @@ func Collect(path string) Info {
 		sha, _ := git(path, "rev-parse", "--short", "HEAD")
 		head = "(" + sha + ")"
 	}
-	info.Head = shorten(head, headMax)
+	info.Head = Shorten(head, headMax)
 
 	// the default branch differs per repo (main / dev / ...), so read it from origin/HEAD
 	if base, err := git(path, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil && base != "" {
@@ -264,7 +264,7 @@ func lines(s string) []string {
 
 // ShortHead caps a branch name for display, the same cut Collect applies to
 // HEAD.
-func ShortHead(s string) string { return shorten(s, headMax) }
+func ShortHead(s string) string { return Shorten(s, headMax) }
 
 func git(path string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", path}, args...)...)
@@ -302,7 +302,8 @@ func countLines(s string) int {
 	return strings.Count(s, "\n") + 1
 }
 
-func shorten(s string, max int) string {
+// Shorten cuts s to max runes, marking the cut with ….
+func Shorten(s string, max int) string {
 	r := []rune(s)
 	if len(r) <= max {
 		return s

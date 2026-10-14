@@ -8,6 +8,10 @@ import (
 	"github.com/gitt510/yagura/internal/render"
 )
 
+// headCap keeps the repos table's HEAD column narrow enough for a split pane.
+// The branch list, one screen deeper, shows the longer name.
+const headCap = 15
+
 // Pending is the placeholder for a value that has not been collected yet.
 const Pending = "…"
 
@@ -61,7 +65,7 @@ func One(r discover.Repo, in gitinfo.Info) render.Row {
 	row := render.Row{
 		Group:      r.Group,
 		Repo:       r.Base,
-		Head:       in.Head,
+		Head:       gitinfo.Shorten(in.Head, headCap),
 		HeadState:  headState(in),
 		Changed:    in.Changed,
 		Main:       mainLabel(in),
