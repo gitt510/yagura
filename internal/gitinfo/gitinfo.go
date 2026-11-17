@@ -4,16 +4,23 @@ package gitinfo
 
 import (
 	"bytes"
+	"context"
 	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // headMax is the display cap that keeps pathologically long branch names
 // from breaking the table.
 const headMax = 32
+
+// fetchTimeout bounds one fetch. A connection that stops answering (after
+// sleep or a network switch) otherwise hangs fetch forever and freezes every
+// later refresh behind it. A var so tests can shorten it.
+var fetchTimeout = 30 * time.Second
 
 // Dash is the display value for "not applicable / could not be read".
 const Dash = "-"
@@ -47,11 +54,13 @@ type Info struct {
 // FetchRepo fetches a single repo.
 func FetchRepo(path string) error {
 	// prune: a tracking ref whose remote branch is gone keeps reporting 0/0
-	_, err := git(path, "fetch", "--quiet", "--prune")
+	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
+	defer cancel()
+	_, err := gitCtx(ctx, path, "fetch", "--quiet", "--prune")
 
 	// re-resolve here only for repos with no reference ref for UNMERGED
 	if _, e := git(path, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"); e != nil {
-		_, _ = git(path, "remote", "set-head", "origin", "--auto")
+		_, _ = gitCtx(ctx, path, "remote", "set-head", "origin", "--auto")
 	}
 	return err
 }
@@ -267,7 +276,14 @@ func lines(s string) []string {
 func ShortHead(s string) string { return Shorten(s, headMax) }
 
 func git(path string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", path}, args...)...)
+	return gitCtx(context.Background(), path, args...)
+}
+
+// gitCtx is git that is killed when ctx ends. WaitDelay stops Wait from
+// blocking on a child (ssh) that outlives git and still holds the pipes.
+func gitCtx(ctx context.Context, path string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", path}, args...)...)
+	cmd.WaitDelay = time.Second
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {

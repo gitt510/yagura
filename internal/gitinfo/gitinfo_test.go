@@ -4,6 +4,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // run executes git in dir and fails the test on error.
@@ -91,5 +92,27 @@ func TestCollectBranches(t *testing.T) {
 		if b.LastCommit == "" {
 			t.Errorf("branch %s has no last commit date", b.Name)
 		}
+	}
+}
+
+// A remote that never answers must not hang FetchRepo: it gives up at
+// fetchTimeout and reports failure, even while ssh keeps running.
+func TestFetchRepoTimeout(t *testing.T) {
+	work := t.TempDir()
+	run(t, work, "init", "-q")
+	run(t, work, "remote", "add", "origin", "ssh://example.invalid/x.git")
+	t.Setenv("GIT_SSH_COMMAND", "sleep 60 #")
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+
+	old := fetchTimeout
+	fetchTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { fetchTimeout = old })
+
+	start := time.Now()
+	if err := FetchRepo(work); err == nil {
+		t.Fatal("FetchRepo on a hung remote returned nil")
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("FetchRepo took %v, want it bounded by fetchTimeout", d)
 	}
 }
